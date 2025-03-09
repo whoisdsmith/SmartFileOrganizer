@@ -1,10 +1,13 @@
 import os
 import sys
 import tkinter as tk
-from gui import DocumentOrganizerApp
 import logging
 import ctypes
 from pathlib import Path
+
+# Add src directory to the path
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
+from gui import DocumentOrganizerApp
 
 def setup_logging():
     """Set up logging for the application"""

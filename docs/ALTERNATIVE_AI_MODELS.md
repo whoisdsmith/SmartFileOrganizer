@@ -298,16 +298,49 @@ When using alternative AI models, the settings interface remains consistent:
 - Directory preferences are stored independently of AI model selection
 - All save and recall functionality for directory defaults works across model changes
 
+## Document Relationship Detection with Different AI Models
+
+The Document Organizer's relationship detection features work with all supported AI models, but there are differences in capability and performance:
+
+### Google Gemini 2.0 Flash (Default)
+
+Our application uses Google Gemini 2.0 Flash by default, which excels at:
+- Fast document relationship detection (prerequisite, sequential, contextual, extension)
+- Accurate relationship strength scoring
+- Detailed relationship explanations
+- High-quality categorization and theme detection
+- Efficient batch processing
+
+### Relationship Detection with Alternative Models
+
+When using alternative AI models, the relationship detection prompts will be adapted:
+
+| Model | Relationship Detection Strengths | Considerations |
+|-------|----------------------------------|----------------|
+| Google Gemini 2.0 Flash | Fast processing, excellent at detecting contextual relationships | Best balance of speed and accuracy |
+| OpenAI GPT-4o | Very nuanced relationship detection, highest accuracy on complex documents | Higher cost per document, slower processing |
+| Azure OpenAI | Enterprise security with comparable performance to OpenAI | Additional configuration required |
+| Anthropic Claude | Excellent with long documents, handles complex document relationships | Modified prompts needed for best results |
+
+### Relationship Types Detected
+
+All supported AI models can detect these relationships between documents:
+
+- **Prerequisite**: Document A must be understood before Document B
+- **Sequential**: Document B naturally follows Document A in a process or timeline
+- **Contextual**: Document B provides context or background for Document A
+- **Extension**: Document B builds upon or extends the content in Document A
+
 ## Comparing AI Model Performance
 
 Each AI model has different strengths for document analysis:
 
 | Model | Strengths | Limitations |
 |-------|-----------|-------------|
-| Google Gemini 2.0 Flash | Fast processing, excellent categorization | Limited token context |
-| OpenAI GPT-4o | Nuanced analysis, high accuracy | Higher cost |
-| Azure OpenAI | Enterprise security, data residency | Configuration complexity |
-| Anthropic Claude | Long context windows | May require format adjustment |
+| Google Gemini 2.0 Flash | Fast processing, excellent categorization, strong relationship detection | Limited token context |
+| OpenAI GPT-4o | Nuanced analysis, high accuracy, detailed relationships | Higher cost |
+| Azure OpenAI | Enterprise security, data residency, controlled fine-tuning | Configuration complexity |
+| Anthropic Claude | Long context windows, sophisticated reasoning | May require format adjustment |
 
 ## Performance Considerations
 

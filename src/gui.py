@@ -8,12 +8,12 @@ import queue
 import time
 import logging
 
-# Import from src directory
-from src.file_analyzer import FileAnalyzer
-from src.file_organizer import FileOrganizer
-from src.settings_manager import SettingsManager
-from src.ai_analyzer import AIAnalyzer
-from src.utils import get_readable_size, sanitize_filename
+# Local imports
+from .file_analyzer import FileAnalyzer
+from .file_organizer import FileOrganizer
+from .settings_manager import SettingsManager
+from .ai_analyzer import AIAnalyzer
+from .utils import get_readable_size, sanitize_filename
 
 logger = logging.getLogger("AIDocumentOrganizer")
 

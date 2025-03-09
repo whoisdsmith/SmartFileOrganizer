@@ -197,7 +197,7 @@ class AIAnalyzer:
             max_results: Maximum number of similar documents to return
             
         Returns:
-            List of similar document dictionaries with similarity scores
+            List of similar document dictionaries with similarity scores and relationship explanations
         """
         if not target_doc or not document_list:
             return []
@@ -206,49 +206,95 @@ class AIAnalyzer:
         target_keywords = set(target_doc.get("keywords", []))
         target_category = target_doc.get("category", "").lower()
         target_theme = target_doc.get("theme", "").lower()
+        target_summary = target_doc.get("summary", "")
+        target_filename = target_doc.get("filename", "")
         
         # Calculate similarity scores for each document
         similarity_scores = []
         
         for doc in document_list:
             # Skip the target document itself
-            if doc.get("filename") == target_doc.get("filename") and doc.get("path") == target_doc.get("path"):
+            if doc.get("filename") == target_filename and doc.get("path") == target_doc.get("path"):
                 continue
                 
             # Extract key information from comparison document
             doc_keywords = set(doc.get("keywords", []))
             doc_category = doc.get("category", "").lower()
             doc_theme = doc.get("theme", "").lower()
+            doc_filename = doc.get("filename", "")
             
-            # Initialize score
+            # Initialize score and relationship attributes
             score = 0
+            relationship_factors = []
             
-            # Calculate keyword overlap (0-5 points)
+            # Calculate keyword overlap (0-6 points)
             if target_keywords and doc_keywords:
-                keyword_overlap = len(target_keywords.intersection(doc_keywords))
-                score += keyword_overlap * 2  # Each matching keyword is worth 2 points
+                matching_keywords = target_keywords.intersection(doc_keywords)
+                keyword_overlap = len(matching_keywords)
+                if keyword_overlap > 0:
+                    keyword_points = min(6, keyword_overlap * 2)  # Each matching keyword is worth 2 points, max 6
+                    score += keyword_points
+                    
+                    # Record the factor for explanation
+                    if keyword_overlap == 1:
+                        relationship_factors.append(f"shared keyword '{list(matching_keywords)[0]}'")
+                    else:
+                        relationship_factors.append(f"{keyword_overlap} shared keywords")
             
             # Check category match (0-3 points)
-            if target_category and doc_category and target_category == doc_category:
-                score += 3
+            if target_category and doc_category:
+                if target_category == doc_category:
+                    score += 3
+                    relationship_factors.append("same category")
+                elif target_category in doc_category or doc_category in target_category:
+                    # Partial category match (e.g. "Finance" and "Finance Reports")
+                    score += 1
+                    relationship_factors.append("related category")
             
-            # Check theme match (0-2 points)
-            if target_theme and doc_theme and target_theme == doc_theme:
+            # Check theme match (0-3 points)
+            if target_theme and doc_theme:
+                if target_theme == doc_theme:
+                    score += 3
+                    relationship_factors.append("same theme")
+                elif target_theme in doc_theme or doc_theme in target_theme:
+                    # Partial theme match
+                    score += 1
+                    relationship_factors.append("related theme")
+            
+            # Check file type similarity (0-2 points)
+            target_ext = os.path.splitext(target_filename)[1].lower() if target_filename else ""
+            doc_ext = os.path.splitext(doc_filename)[1].lower() if doc_filename else ""
+            if target_ext and doc_ext and target_ext == doc_ext:
                 score += 2
+                relationship_factors.append(f"same file type ({target_ext})")
+                
+            # Generate relationship explanation
+            relationship_explanation = ""
+            if relationship_factors:
+                relationship_explanation = f"Documents have {' and '.join(relationship_factors)}"
+                
+            # Determine relationship strength
+            relationship_strength = "low"
+            if score >= 6:
+                relationship_strength = "high"
+            elif score >= 3:
+                relationship_strength = "medium"
                 
             # Only include documents with some similarity
             if score > 0:
-                similarity_scores.append((doc, score))
+                similarity_scores.append((doc, score, relationship_explanation, relationship_strength))
         
         # Sort by similarity score (highest first)
         similarity_scores.sort(key=lambda x: x[1], reverse=True)
         
-        # Return the top N similar documents with their scores
+        # Return the top N similar documents with their scores and explanations
         result = []
-        for doc, score in similarity_scores[:max_results]:
-            # Add similarity score to the document dictionary
+        for doc, score, explanation, strength in similarity_scores[:max_results]:
+            # Add similarity information to the document dictionary
             doc_copy = doc.copy()
             doc_copy["similarity_score"] = score
+            doc_copy["relationship_explanation"] = explanation
+            doc_copy["relationship_strength"] = strength
             result.append(doc_copy)
             
         return result
@@ -265,35 +311,48 @@ class AIAnalyzer:
         Returns:
             Dictionary with relationship information and related documents
         """
-        # First use the similarity scoring method
+        # First use the similarity scoring method which now includes relationship explanations
         similar_docs = self.find_similar_documents(target_doc, document_list, max_results)
         
-        # If we have enough results, return them
-        if len(similar_docs) >= max_results:
+        # Check if we have good quality matches (with high scores)
+        high_quality_matches = sum(1 for doc in similar_docs if doc.get("similarity_score", 0) >= 5)
+        
+        # If we have enough high-quality results, return them
+        if high_quality_matches >= min(2, max_results):
             return {
                 "related_documents": similar_docs,
                 "relationship_type": "content_similarity",
-                "relationship_strength": "high" if similar_docs and similar_docs[0].get("similarity_score", 0) > 5 else "medium"
+                "relationship_strength": "high" if similar_docs and similar_docs[0].get("similarity_score", 0) >= 6 else "medium"
             }
             
-        # If we have few or no results, use AI to find deeper relationships
+        # If we have some results but want to try for more specific relationships, use AI
         # Get the target document summary and key information
         target_summary = target_doc.get("summary", "")
         target_category = target_doc.get("category", "")
         target_filename = target_doc.get("filename", "")
+        target_keywords = target_doc.get("keywords", [])
+        
+        # Convert keywords to string if it's a list
+        if isinstance(target_keywords, list):
+            target_keywords = ", ".join(target_keywords)
         
         if not target_summary:
             return {
                 "related_documents": similar_docs,
                 "relationship_type": "keyword_match",
-                "relationship_strength": "low"
+                "relationship_strength": "medium" if similar_docs else "low"
             }
             
-        # Prepare document info for AI analysis
+        # Prepare document info for AI analysis - include more documents than needed
+        # to give the AI more options to find meaningful relationships
         doc_info_list = []
         for doc in document_list:
             # Skip the target document itself
             if doc.get("filename") == target_filename:
+                continue
+                
+            # Skip documents with no summary
+            if not doc.get("summary"):
                 continue
                 
             # Create a simple representation of each document
@@ -304,10 +363,16 @@ class AIAnalyzer:
                 "summary": doc.get("summary", ""),
                 "keywords": doc.get("keywords", [])
             }
+            
+            # Convert keywords to string if it's a list
+            if isinstance(doc_info["keywords"], list):
+                doc_info["keywords"] = ", ".join(doc_info["keywords"])
+                
             doc_info_list.append(doc_info)
             
-            # Limit to 10 documents for the AI prompt to avoid token limits
-            if len(doc_info_list) >= 10:
+            # Limit to 15 documents for the AI prompt to avoid token limits
+            # but still give enough options to find meaningful relationships
+            if len(doc_info_list) >= 15:
                 break
                 
         # If no documents to compare, return simple results
@@ -315,7 +380,7 @@ class AIAnalyzer:
             return {
                 "related_documents": similar_docs,
                 "relationship_type": "keyword_match",
-                "relationship_strength": "low"
+                "relationship_strength": "medium" if similar_docs else "low"
             }
             
         try:
@@ -323,28 +388,37 @@ class AIAnalyzer:
             docs_text = "\n\n".join([
                 f"Document {doc['id']}: {doc['filename']}\n"
                 f"Category: {doc['category']}\n"
-                f"Keywords: {', '.join(doc['keywords'])}\n"
+                f"Keywords: {doc['keywords']}\n"
                 f"Summary: {doc['summary']}"
                 for doc in doc_info_list
             ])
             
-            # Create the prompt for finding relationships
+            # Create the prompt for finding relationships - enhanced to look for more specific relationships
             prompt = f"""
             Analyze the relationship between the target document and the collection of other documents.
-            Identify which documents are most closely related to the target and explain the relationship.
+            Look for contextual connections, complementary information, sequential relationships, 
+            and topical relevance beyond simple keyword matching.
 
             Target Document: {target_filename}
             Category: {target_category}
+            Keywords: {target_keywords}
             Summary: {target_summary}
 
             Other documents in the collection:
             {docs_text}
 
-            Based on the content and themes, identify up to {max_results} documents from the collection
-            that are most closely related to the target document. For each related document:
+            Based on deep content analysis, identify up to {max_results} documents from the collection
+            that are most meaningfully related to the target document. Consider:
+            - Documents that complement or extend the target's information
+            - Documents that represent previous/next steps in a process
+            - Documents that provide context or background for the target
+            - Documents covering related aspects of the same topic
+            
+            For each related document:
             1. The document ID
             2. The relationship strength (high, medium, or low)
-            3. A brief explanation of the relationship (max 1 sentence)
+            3. The relationship type (e.g., "complementary", "prerequisite", "extension", "contextual", etc.)
+            4. A specific explanation of how the documents relate (1-2 sentences)
 
             Return your analysis in JSON format:
             {{
@@ -352,7 +426,8 @@ class AIAnalyzer:
                     {{
                         "id": document_id,
                         "relationship_strength": "high|medium|low",
-                        "relationship_explanation": "Brief explanation"
+                        "relationship_type": "relationship type",
+                        "relationship_explanation": "Specific explanation of the relationship"
                     }},
                     ...
                 ]
@@ -366,8 +441,8 @@ class AIAnalyzer:
                 response = self.model.generate_content(
                     prompt,
                     generation_config={
-                        "temperature": 0.3,
-                        "max_output_tokens": 1000,
+                        "temperature": 0.4,  # Slightly higher temperature for more creative connections
+                        "max_output_tokens": 1200,
                     }
                 )
                 
@@ -403,14 +478,60 @@ class AIAnalyzer:
                                 # Add the relationship information to the document
                                 doc_copy = doc.copy()
                                 doc_copy["relationship_strength"] = rel_doc.get("relationship_strength", "medium")
+                                doc_copy["relationship_type"] = rel_doc.get("relationship_type", "related content")
                                 doc_copy["relationship_explanation"] = rel_doc.get("relationship_explanation", "")
+                                
+                                # Convert relationship to a similarity score for consistency
+                                rel_strength = doc_copy["relationship_strength"].lower()
+                                doc_copy["similarity_score"] = 7 if rel_strength == "high" else 4 if rel_strength == "medium" else 2
+                                
                                 related_docs.append(doc_copy)
                                 break
                 
+                # Combine AI results with similarity results if needed
+                if not related_docs:
+                    return {
+                        "related_documents": similar_docs,
+                        "relationship_type": "keyword_similarity",
+                        "relationship_strength": "medium" if similar_docs else "low"
+                    }
+                
+                # If we have both types of results, prioritize higher quality matches
+                combined_docs = []
+                # First add high-quality AI-determined relationships
+                for doc in related_docs:
+                    if doc.get("relationship_strength") == "high":
+                        combined_docs.append(doc)
+                
+                # Then add high-scoring similarity matches that aren't already included
+                for doc in similar_docs:
+                    if doc.get("similarity_score", 0) >= 5:
+                        # Check if this document is already included
+                        if not any(d.get("filename") == doc.get("filename") for d in combined_docs):
+                            combined_docs.append(doc)
+                
+                # Fill in with remaining AI relationships
+                for doc in related_docs:
+                    if doc.get("relationship_strength") != "high":
+                        if not any(d.get("filename") == doc.get("filename") for d in combined_docs):
+                            combined_docs.append(doc)
+                
+                # Finally, add any remaining similarity matches
+                for doc in similar_docs:
+                    if doc.get("similarity_score", 0) < 5:
+                        if not any(d.get("filename") == doc.get("filename") for d in combined_docs):
+                            combined_docs.append(doc)
+                
+                # Limit to the requested number of results
+                final_docs = combined_docs[:max_results]
+                
                 return {
-                    "related_documents": related_docs or similar_docs,  # Fallback to simple similarity if AI returns nothing
+                    "related_documents": final_docs,
                     "relationship_type": "content_relationship",
-                    "relationship_strength": "high"
+                    "relationship_strength": "high" if final_docs and (
+                        final_docs[0].get("similarity_score", 0) >= 6 or 
+                        final_docs[0].get("relationship_strength") == "high"
+                    ) else "medium"
                 }
                 
             except Exception as e:

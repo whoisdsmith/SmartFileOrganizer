@@ -1,0 +1,10 @@
+Filename: employee_data.csv
+Original Path: ./test_files/employee_data.csv
+Type: CSV
+Size: 714 bytes
+Category: Employee Data
+Theme: Employees
+Keywords: employee, department, salary, hire date, email
+
+Summary:
+The document contains employee data including first name, last name, email, department, salary, and hire date. It lists information for ten employees across various departments such as Engineering, Marketing, Finance, and Human Resources.

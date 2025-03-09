@@ -1,0 +1,10 @@
+Filename: recipe.md
+Original Path: ./test_files/recipe.md
+Type: Markdown
+Size: 1092 bytes
+Category: Recipe
+Theme: Cookies
+Keywords: chocolate chip cookies, recipe, baking, dessert, cookies
+
+Summary:
+This document provides a recipe for classic chocolate chip cookies, including a list of ingredients, step-by-step instructions, storage recommendations, and basic nutritional information. It details how to prepare, bake, and store the cookies for optimal freshness.

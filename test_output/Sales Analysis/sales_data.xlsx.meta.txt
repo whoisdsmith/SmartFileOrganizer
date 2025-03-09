@@ -1,0 +1,10 @@
+Filename: sales_data.xlsx
+Original Path: ./test_files/sales_data.xlsx
+Type: Excel
+Size: 56771 bytes
+Category: Sales Analysis
+Theme: Sales
+Keywords: Sales Data, Region, Product, Category, Total Sales
+
+Summary:
+The Excel document contains sales data for various products across different regions, including details like units sold, unit price, and discounts. It also provides a summary of total sales, average order value, total units sold, and the number of orders, along with a breakdown of sales by region and product category.

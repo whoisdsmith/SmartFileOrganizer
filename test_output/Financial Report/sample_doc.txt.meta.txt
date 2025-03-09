@@ -1,0 +1,10 @@
+Filename: sample_doc.txt
+Original Path: ./test_files/sample_doc.txt
+Type: Text
+Size: 822 bytes
+Category: Financial Report
+Theme: Finance
+Keywords: Revenue, Profit, Expenses, Market Analysis, Growth
+
+Summary:
+The Q1 2024 financial report shows a strong performance with increased revenue, reduced expenses, and positive market analysis. The company anticipates continued growth in Q2 and expansion into the European market in Q3, with action items focused on marketing, hiring, and pricing strategy.

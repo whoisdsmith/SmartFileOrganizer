@@ -49,6 +49,8 @@ The application follows a modular design with clear separation of concerns:
    - Connects to Google Gemini API
    - Constructs appropriate prompts for analysis
    - Processes API responses and extracts structured data
+   - Performs document relationship detection
+   - Calculates similarity scores and relationship strength ratings
 
 6. **file_organizer.py**: Document organization based on analysis
    - Creates category-based folder structure
@@ -116,6 +118,16 @@ class AIAnalyzer:
         
     def _get_content_analysis(self, text, file_type):
         # Constructs prompt and processes API response
+        
+    def find_similar_documents(self, target_doc, document_list, max_results=5):
+        # Find documents similar to the target document
+        # Returns list of similar document dictionaries with similarity scores
+        
+    def find_related_content(self, target_doc, document_list, max_results=5):
+        # Find documents related to the target document using AI comparison
+        # Returns dictionary with relationship information and related documents
+        # Identifies relationship types (prerequisite, sequential, contextual, extension)
+        # Provides strength ratings (high, medium, low) with explanations
 ```
 
 ### FileOrganizer
@@ -501,6 +513,8 @@ The application includes test scripts:
 
 - `test_document_organizer.py`: Tests the end-to-end workflow
 - `test_ai_analyzer.py`: Tests the AI integration
+- `test_relationships.py`: Tests basic document relationship detection
+- `test_deep_relationships.py`: Tests advanced contextual document relationship detection
 
 To add new tests, follow this pattern:
 

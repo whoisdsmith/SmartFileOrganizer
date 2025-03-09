@@ -36,7 +36,7 @@ The AI Document Organizer helps you automatically organize your documents by ana
    ```
 3. Set up your Google API key as an environment variable:
    - Open Command Prompt as Administrator
-   - Run: `setx GOOGLE_API_KEY "your-api-key-here"` (replace with your actual API key)
+   - Run: `setx GOOGLE_API_KEY AIzaSyAndYCK_XqP78lnjvVs4o8bFLso_Ar0J_Q` (replace with your actual API key)
    - Restart Command Prompt for the changes to take effect
 
 ## Quick Start

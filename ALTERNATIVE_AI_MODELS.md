@@ -280,6 +280,24 @@ For Anthropic Claude integration, follow a similar pattern:
 
 See the DEVELOPER_GUIDE.md for more detailed information on extending the application with alternative AI models.
 
+## UI Considerations with Alternative Models
+
+When using alternative AI models, the settings interface remains consistent:
+
+### Theme Management
+- The theme selection functionality works independently of the AI model used
+- All appearance settings in the Settings tab function normally regardless of model
+
+### Performance Settings
+- Batch processing works with all AI models
+- You may want to adjust batch size based on the model's speed:
+  - Smaller batches (5-10) for slower or more expensive models
+  - Larger batches (20-50) for faster models
+
+### Directory Default Settings
+- Directory preferences are stored independently of AI model selection
+- All save and recall functionality for directory defaults works across model changes
+
 ## Comparing AI Model Performance
 
 Each AI model has different strengths for document analysis:

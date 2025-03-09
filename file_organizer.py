@@ -6,6 +6,7 @@ from pathlib import Path
 import logging
 
 from utils import sanitize_filename
+from ai_analyzer import AIAnalyzer
 
 class FileOrganizer:
     """
@@ -13,6 +14,7 @@ class FileOrganizer:
     """
     def __init__(self):
         self.logger = logging.getLogger(__name__)
+        self.ai_analyzer = AIAnalyzer()
     
     def organize_files(self, analyzed_files, target_dir, callback=None, options=None):
         """

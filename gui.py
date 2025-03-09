@@ -10,6 +10,7 @@ import logging
 from file_analyzer import FileAnalyzer
 from file_organizer import FileOrganizer
 from settings_manager import SettingsManager
+from ai_analyzer import AIAnalyzer
 from utils import get_readable_size, sanitize_filename
 
 logger = logging.getLogger("AIDocumentOrganizer")
@@ -64,6 +65,7 @@ class DocumentOrganizerApp:
         
         self.analyzer = FileAnalyzer()
         self.organizer = FileOrganizer()
+        self.ai_analyzer = AIAnalyzer()
         self.status_queue = queue.Queue()
         self.is_scanning = False
         self.is_organizing = False
@@ -525,7 +527,7 @@ class DocumentOrganizerApp:
         """Thread function to find related documents"""
         try:
             # Find similar documents using the AI analyzer
-            similar_docs = self.analyzer.find_similar_documents(file_info, self.scanned_files, max_results=3)
+            similar_docs = self.ai_analyzer.find_similar_documents(file_info, self.scanned_files, max_results=3)
             
             # Update the details text with the results
             self.details_text.config(state=tk.NORMAL)

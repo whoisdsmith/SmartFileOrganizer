@@ -79,10 +79,20 @@ pip install beautifulsoup4 chardet python-docx google-generativeai numpy openai 
    - Batch Size: Control how many files are processed at once
    - Theme: Change the visual appearance of the application
    - Default Directories: Save commonly used locations
+   - Organization Rules: Customize how files are organized
+
+### Organization Options
+1. In the Settings tab, find the "Organization Rules" section
+2. Toggle options based on your needs:
+   - Create category folders: Enable/disable categorized folder structure
+   - Generate content summaries: Create separate summary files
+   - Include metadata: Generate detailed AI analysis files
+   - Copy files instead of moving: Preserve original files
 
 ### Saving Your Preferences
 1. Change settings to your preferred values
-2. Click the relevant "Save" or "Apply" button:
+2. Organization rules are automatically saved when changed
+3. For other settings, click the relevant buttons:
    - "Save as Default" for batch size
    - "Use Current" for directory defaults
    - "Apply Theme" for visual theme changes

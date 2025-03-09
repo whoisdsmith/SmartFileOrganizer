@@ -20,9 +20,18 @@ The AI Document Organizer helps you automatically organize your documents by ana
 - **Content Extraction**: Automatically extracts and analyzes text from all supported formats
 - **Windows-Optimized**: Native Windows interface with proper file handling
 - **Detailed Analysis**: Generates metadata files with AI insights for each processed document
+- **Content Summaries**: Creates separate summary files with AI-generated content overviews
+- **Customizable Organization**: Configure how files are organized with flexible rules:
+  - Enable/disable category folder creation
+  - Generate standalone summary files for each document
+  - Include or exclude metadata files
+  - Copy files instead of moving them
+- **Folder Content Reports**: Generate summary reports of organized folder contents
+- **Context-Aware Suggestions**: Receive intelligent file relationship suggestions based on content similarity
+- **Content Visualization**: Enhanced visualization of document relationships and content connections
 - **Batch Processing**: Processes files in configurable batches to optimize performance
 - **Customizable UI**: Choose from multiple themes to match your Windows experience
-- **Persistent Settings**: Save your preferred batch size and directory locations for future use
+- **Persistent Settings**: Save your preferred organization rules, batch sizes, and directory locations
 
 ## Requirements
 
@@ -121,7 +130,14 @@ The Settings tab provides various customization options:
    - Click "Use Current" to save the currently selected directories
    - These saved locations will be pre-populated when you restart the application
 
-3. **Interface Theme**:
+3. **Organization Rules**:
+   - **Create Category Folders**: Toggle creation of categorized folder structure
+   - **Generate Content Summaries**: Enable/disable creation of standalone summary files
+   - **Include Metadata**: Control whether metadata files are generated with AI analysis
+   - **Copy Instead of Move**: Choose between copying or moving files during organization
+   - All settings are automatically saved when changed
+
+4. **Interface Theme**:
    - Choose from available visual themes to customize the application appearance
    - The theme selector shows all available themes for your system
    - Click "Apply Theme" to switch to the selected theme immediately

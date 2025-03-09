@@ -122,11 +122,19 @@ class AIAnalyzer:
 
 ```python
 class FileOrganizer:
-    def organize_files(self, analyzed_files, target_dir):
-        # Organizes files based on AI analysis
+    def organize_files(self, analyzed_files, target_dir, callback=None, options=None):
+        # Organizes files based on AI analysis with customizable options
+        # Options include:
+        # - create_category_folders: Whether to create category folders (default: True)
+        # - generate_summaries: Whether to generate content summary files (default: True)
+        # - include_metadata: Whether to create metadata files (default: True)
+        # - copy_instead_of_move: Whether to copy files instead of moving them (default: True)
         
     def _create_metadata_file(self, file_info, target_path):
         # Creates metadata file with AI analysis
+        
+    def _create_summary_file(self, file_info, target_path):
+        # Creates separate summary file with content summary and timestamps
 ```
 
 ## Extending the Application
@@ -287,6 +295,38 @@ def _create_settings_widgets(self):
     apply_theme_button = ttk.Button(self.ui_frame, text="Apply Theme", 
                                   command=self.apply_theme)
     apply_theme_button.grid(row=0, column=2, sticky='w', padx=5, pady=5)
+    
+    # Organization Rules Frame
+    self.org_rules_frame = ttk.LabelFrame(self.settings_tab, text="Organization Rules", padding=(10, 5))
+    
+    # Create checkboxes for organization rules
+    ttk.Checkbutton(self.org_rules_frame, text="Create category folders",
+                   variable=self.create_category_folders,
+                   command=self.save_organization_rules).grid(row=0, column=0, sticky='w', padx=5, pady=5)
+                   
+    ttk.Checkbutton(self.org_rules_frame, text="Generate content summaries",
+                   variable=self.generate_summaries,
+                   command=self.save_organization_rules).grid(row=1, column=0, sticky='w', padx=5, pady=5)
+                   
+    ttk.Checkbutton(self.org_rules_frame, text="Include metadata in separate files",
+                   variable=self.include_metadata,
+                   command=self.save_organization_rules).grid(row=2, column=0, sticky='w', padx=5, pady=5)
+                   
+    ttk.Checkbutton(self.org_rules_frame, text="Copy files instead of moving them",
+                   variable=self.copy_instead_of_move,
+                   command=self.save_organization_rules).grid(row=3, column=0, sticky='w', padx=5, pady=5)
+    
+    # Help text explaining the rules
+    rules_help_frame = ttk.Frame(self.org_rules_frame)
+    rules_help_text = ScrolledText(rules_help_frame, wrap=tk.WORD, width=40, height=5)
+    rules_help_text.insert(tk.END, "Organization Rules Help:\n\n")
+    rules_help_text.insert(tk.END, "- Create category folders: Create a folder structure based on AI-detected categories\n")
+    rules_help_text.insert(tk.END, "- Generate summaries: Create summary files with AI-generated content descriptions\n")
+    rules_help_text.insert(tk.END, "- Include metadata: Save detailed AI analysis alongside each file\n")
+    rules_help_text.insert(tk.END, "- Copy files: Keep original files intact (vs. moving them)\n")
+    rules_help_text.config(state=tk.DISABLED)
+    rules_help_frame.grid(row=0, column=1, rowspan=4, sticky='nsew', padx=5, pady=5)
+    rules_help_text.pack(fill='both', expand=True)
 ```
 
 Methods to handle settings changes:
@@ -314,6 +354,26 @@ def save_batch_size(self):
     except Exception as e:
         logger.error(f"Error saving batch size: {str(e)}")
         messagebox.showerror("Error", f"Could not save settings: {str(e)}")
+        
+def save_organization_rules(self):
+    """Save the organization rules to settings"""
+    try:
+        # Get values from UI
+        rules = {
+            "create_category_folders": self.create_category_folders.get(),
+            "generate_summaries": self.generate_summaries.get(),
+            "include_metadata": self.include_metadata.get(),
+            "copy_instead_of_move": self.copy_instead_of_move.get()
+        }
+        
+        # Save to settings
+        for key, value in rules.items():
+            self.settings_manager.set_setting(f"organization_rules.{key}", value)
+            
+        logger.info(f"Organization rules saved: {rules}")
+    except Exception as e:
+        logger.error(f"Error saving organization rules: {str(e)}")
+        messagebox.showerror("Error", f"Could not save organization rules: {str(e)}")
 ```
 
 ### Adding New Features to the GUI

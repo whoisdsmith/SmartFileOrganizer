@@ -1,0 +1,413 @@
+# AI Document Organizer - Developer Guide
+
+This document provides technical information about the AI Document Organizer application architecture, code structure, and guidelines for extending its functionality.
+
+## Architecture Overview
+
+The application follows a modular design with clear separation of concerns:
+
+```
+┌───────────────┐        ┌────────────────┐        ┌────────────────┐
+│    GUI Layer  │───────▶│  Business Layer │───────▶│   AI Services  │
+└───────────────┘        └────────────────┘        └────────────────┘
+       │                         │                         │
+       │                         │                         │
+       ▼                         ▼                         ▼
+┌───────────────┐        ┌────────────────┐        ┌────────────────┐
+│   User Input  │        │  File System    │        │  Google Gemini │
+│   & Display   │        │  Operations     │        │      API       │
+└───────────────┘        └────────────────┘        └────────────────┘
+```
+
+## Code Structure
+
+### Main Components
+
+1. **main.py**: Application entry point and initialization
+   - Sets up logging
+   - Configures application environment (DPI awareness, icons, theme)
+   - Initializes and launches the GUI
+
+2. **gui.py**: User interface components
+   - Implements `DocumentOrganizerApp` class for the main window
+   - Handles user input, file browsing, and results display
+   - Manages threading for non-blocking operations
+
+3. **file_analyzer.py**: Document scanning and analysis
+   - Scans directories for supported file types
+   - Collects file information
+   - Coordinates between parser and AI analyzer
+
+4. **file_parser.py**: Content extraction from various file formats
+   - Implements parsing logic for each supported file type
+   - Extracts text and metadata
+   - Handles encoding detection and character set issues
+
+5. **ai_analyzer.py**: AI processing using Google Gemini
+   - Connects to Google Gemini API
+   - Constructs appropriate prompts for analysis
+   - Processes API responses and extracts structured data
+
+6. **file_organizer.py**: Document organization based on analysis
+   - Creates category-based folder structure
+   - Moves/copies files to appropriate locations
+   - Generates metadata files with analysis results
+
+7. **utils.py**: Helper functions and utilities
+   - File size formatting
+   - Filename sanitization
+   - Text processing utilities
+
+### Data Flow
+
+1. User selects source directory containing documents
+2. `FileAnalyzer` scans directory for supported files
+3. For each file:
+   - `FileParser` extracts text content based on file type
+   - `AIAnalyzer` processes content via Google Gemini API
+   - Results are displayed in the GUI
+4. User selects target directory and initiates organization
+5. `FileOrganizer` creates category folders and copies files
+
+## Key Classes and Methods
+
+### FileAnalyzer
+
+```python
+class FileAnalyzer:
+    def __init__(self):
+        self.parser = FileParser()
+        self.ai_analyzer = AIAnalyzer()
+        
+    def scan_directory(self, directory_path):
+        # Scans directory and returns list of analyzed files
+        
+    def _get_file_info(self, file_path, file_ext):
+        # Extracts basic file information
+```
+
+### FileParser
+
+```python
+class FileParser:
+    def extract_text(self, file_path, file_ext):
+        # Extracts text content from various file types
+        
+    def extract_metadata(self, file_path, file_ext):
+        # Extracts metadata from files
+        
+    def _parse_csv(self, file_path):
+        # CSV-specific parsing logic
+    
+    # Additional parsing methods for other file types
+```
+
+### AIAnalyzer
+
+```python
+class AIAnalyzer:
+    def __init__(self):
+        # Initialize Google Gemini API connection
+        
+    def analyze_content(self, text, file_type):
+        # Analyze document content using AI
+        
+    def _get_content_analysis(self, text, file_type):
+        # Constructs prompt and processes API response
+```
+
+### FileOrganizer
+
+```python
+class FileOrganizer:
+    def organize_files(self, analyzed_files, target_dir):
+        # Organizes files based on AI analysis
+        
+    def _create_metadata_file(self, file_info, target_path):
+        # Creates metadata file with AI analysis
+```
+
+## Extending the Application
+
+### Adding Support for New File Types
+
+1. Update `FileParser.extract_text()` to recognize the new extension
+2. Implement a new parsing method (`_parse_new_type()`)
+3. Add metadata extraction for the new type if applicable
+
+Example:
+
+```python
+def extract_text(self, file_path, file_ext):
+    # Existing code...
+    elif file_ext == '.pdf':
+        return self._parse_pdf(file_path)
+    # ...
+
+def _parse_pdf(self, file_path):
+    """Parse PDF file content"""
+    try:
+        # Use appropriate PDF library
+        import PyPDF2
+        
+        with open(file_path, 'rb') as file:
+            reader = PyPDF2.PdfReader(file)
+            text = ""
+            for page_num in range(len(reader.pages)):
+                text += reader.pages[page_num].extract_text() + "\n\n"
+            return text
+    except Exception as e:
+        return f"Error parsing PDF file: {str(e)}"
+```
+
+### Customizing AI Analysis
+
+The analysis prompt can be customized in `AIAnalyzer._get_content_analysis()`:
+
+```python
+def _get_content_analysis(self, text, file_type):
+    # Modify the prompt to extract different or additional information
+    prompt = f"""
+    Please analyze the following {file_type} document content and provide:
+    1. A category for document organization (choose the most specific appropriate category)
+    2. 3-5 keywords that represent the main topics in the document
+    3. A brief summary of the document content (max 2-3 sentences)
+    4. The intended audience for this document
+    5. A difficulty rating from 1-5 (1=simple, 5=complex)
+    
+    Content:
+    {text}
+    
+    Return your analysis in JSON format with the following structure:
+    {{
+        "category": "Category name",
+        "keywords": ["keyword1", "keyword2", "keyword3"],
+        "summary": "Brief summary of the content",
+        "audience": "Intended audience",
+        "difficulty": 3
+    }}
+    
+    Make sure to return ONLY valid JSON without any additional text or explanation.
+    """
+    
+    # Update the rest of the method to handle the new fields
+```
+
+### Adding Support for Other AI Models
+
+The application can be extended to work with different AI models:
+
+1. Create a new analyzer class (e.g., `OpenAIAnalyzer`)
+2. Implement compatible analysis methods
+3. Update `file_analyzer.py` to select the appropriate analyzer
+
+Example:
+
+```python
+# In a new file openai_analyzer.py
+import os
+import json
+from openai import OpenAI
+
+class OpenAIAnalyzer:
+    def __init__(self):
+        api_key = os.environ.get("OPENAI_API_KEY", "")
+        self.client = OpenAI(api_key=api_key)
+        self.model = "gpt-4o"  # the newest OpenAI model
+    
+    def analyze_content(self, text, file_type):
+        # Similar to AIAnalyzer.analyze_content()
+        
+    def _get_content_analysis(self, text, file_type):
+        prompt = f"""
+        Please analyze the following {file_type} document content and provide:
+        1. A category for document organization (choose the most specific appropriate category)
+        2. 3-5 keywords that represent the main topics in the document
+        3. A brief summary of the document content (max 2-3 sentences)
+        
+        Content:
+        {text}
+        """
+        
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"}
+        )
+        
+        result = json.loads(response.choices[0].message.content)
+        return result
+```
+
+## UI Customization
+
+### Adding New Features to the GUI
+
+To add new buttons or functionality to the GUI:
+
+1. Modify `DocumentOrganizerApp._create_widgets()` to add new UI elements
+2. Add corresponding methods to handle new actions
+3. Update the layout in `_setup_layout()`
+
+Example - Adding an "Export Analysis" button:
+
+```python
+def _create_widgets(self):
+    # Existing code...
+    
+    # Add export button
+    self.export_button = ttk.Button(
+        self.button_frame, 
+        text="Export Analysis", 
+        command=self.export_analysis
+    )
+    
+    # ...
+
+def _setup_layout(self):
+    # Existing code...
+    
+    # Add export button to layout
+    self.export_button.grid(row=0, column=3, padx=5, pady=5, sticky="ew")
+    
+    # ...
+
+def export_analysis(self):
+    """Export analysis results to CSV file"""
+    if not self.analyzed_files:
+        messagebox.showinfo("Export", "No files have been analyzed yet.")
+        return
+        
+    file_path = filedialog.asksaveasfilename(
+        defaultextension=".csv",
+        filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+    )
+    
+    if not file_path:
+        return
+        
+    try:
+        with open(file_path, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(["Filename", "Category", "Keywords", "Summary"])
+            
+            for file in self.analyzed_files:
+                writer.writerow([
+                    file["filename"],
+                    file.get("category", "Unknown"),
+                    ", ".join(file.get("keywords", [])),
+                    file.get("summary", "")
+                ])
+                
+        messagebox.showinfo("Export", f"Analysis exported to {file_path}")
+    except Exception as e:
+        messagebox.showerror("Export Error", f"Error exporting analysis: {str(e)}")
+```
+
+## Performance Optimization
+
+### Handling Large Document Sets
+
+For large sets of documents, consider these optimizations:
+
+1. **Batch Processing**: Process files in batches to manage memory usage
+
+```python
+def scan_directory(self, directory_path, batch_size=50):
+    all_files = []
+    file_paths = [os.path.join(directory_path, f) for f in os.listdir(directory_path)]
+    
+    # Process in batches
+    for i in range(0, len(file_paths), batch_size):
+        batch = file_paths[i:i+batch_size]
+        # Process this batch
+        batch_results = self._process_batch(batch)
+        all_files.extend(batch_results)
+        
+    return all_files
+```
+
+2. **Parallelization**: Use multiprocessing for CPU-bound parsing operations
+
+```python
+from multiprocessing import Pool
+
+def _process_batch(self, file_paths):
+    # Use multiprocessing for parsing
+    with Pool(processes=4) as pool:
+        results = pool.map(self._process_single_file, file_paths)
+    return [r for r in results if r is not None]
+```
+
+## Logging and Debugging
+
+The application uses Python's built-in logging module. Logs are stored in:
+
+- Windows: `%USERPROFILE%\AppData\Local\AIDocumentOrganizer\app.log`
+- macOS/Linux: `~/.local/share/AIDocumentOrganizer/app.log`
+
+To increase log detail for debugging:
+
+```python
+# In setup_logging()
+logging.basicConfig(
+    level=logging.DEBUG,  # Change from INFO to DEBUG
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_file),
+        logging.StreamHandler()
+    ]
+)
+```
+
+## Testing
+
+The application includes test scripts:
+
+- `test_document_organizer.py`: Tests the end-to-end workflow
+- `test_ai_analyzer.py`: Tests the AI integration
+
+To add new tests, follow this pattern:
+
+```python
+def test_new_feature():
+    """Test description"""
+    print("Testing new feature")
+    
+    # Setup
+    # ...
+    
+    # Test steps
+    # ...
+    
+    # Verification
+    assert result == expected, f"Expected {expected}, got {result}"
+    
+    print("Test completed successfully!")
+
+if __name__ == "__main__":
+    test_new_feature()
+```
+
+## Best Practices
+
+1. **Error Handling**: Always use try-except blocks for external operations
+2. **User Feedback**: Update the UI to show progress during long operations
+3. **API Keys**: Never hardcode API keys; always use environment variables
+4. **Large Files**: Implement appropriate truncation for very large documents
+5. **Threading**: Keep UI responsive by offloading heavy tasks to threads
+
+## Environment Variables
+
+- `GOOGLE_API_KEY`: Required for Google Gemini API access
+- `OPENAI_API_KEY`: Optional, for OpenAI integration if implemented
+
+## Dependencies
+
+- `beautifulsoup4`: HTML parsing
+- `chardet`: Character encoding detection
+- `python-docx`: Word document parsing
+- `google-generativeai`: Google Gemini API client
+- `pandas`, `openpyxl`: Excel and CSV handling
+- `numpy`: Numerical computations
+- `openai`: Optional, for OpenAI integration

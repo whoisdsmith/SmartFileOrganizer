@@ -1,0 +1,11 @@
+id,first_name,last_name,email,department,salary,hire_date
+1,John,Smith,john.smith@company.com,Engineering,85000,2020-05-15
+2,Sarah,Johnson,sarah.j@company.com,Marketing,75000,2019-08-22
+3,Robert,Williams,rob.williams@company.com,Finance,95000,2018-03-10
+4,Jennifer,Brown,jen.brown@company.com,Human Resources,72000,2021-01-07
+5,Michael,Jones,michael.j@company.com,Engineering,90000,2018-11-30
+6,Emily,Davis,emily.davis@company.com,Marketing,78000,2020-07-14
+7,David,Miller,david.m@company.com,Finance,92000,2017-09-05
+8,Lisa,Wilson,lisa.w@company.com,Human Resources,71000,2021-04-22
+9,James,Taylor,james.t@company.com,Engineering,87000,2019-02-18
+10,Amanda,Anderson,amanda.a@company.com,Marketing,76000,2020-10-03

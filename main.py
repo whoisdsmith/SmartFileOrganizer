@@ -116,6 +116,9 @@ def main():
     # Initialize application
     app = DocumentOrganizerApp(root)
     
+    # We don't need to manually configure the notebook layout
+    # It's already handled in the GUI class using grid
+    
     # Start the application main loop
     logger.info("Entering main application loop")
     root.mainloop()

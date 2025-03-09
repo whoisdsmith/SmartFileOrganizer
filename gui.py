@@ -5,10 +5,13 @@ from tkinter.scrolledtext import ScrolledText
 import threading
 import queue
 import time
+import logging
 
 from file_analyzer import FileAnalyzer
 from file_organizer import FileOrganizer
 from utils import get_readable_size, sanitize_filename
+
+logger = logging.getLogger("AIDocumentOrganizer")
 
 class DocumentOrganizerApp:
     def __init__(self, root):
@@ -21,12 +24,21 @@ class DocumentOrganizerApp:
         self.root = root
         self.source_dir = tk.StringVar()
         self.target_dir = tk.StringVar()
+        # Aliases for save_directory method
+        self.source_var = self.source_dir
+        self.target_var = self.target_dir
         self.search_term = tk.StringVar()
+        self.batch_size = tk.IntVar(value=20)  # Default batch size
+        self.theme_var = tk.StringVar(value="System")  # Default theme
+        
         self.analyzer = FileAnalyzer()
         self.organizer = FileOrganizer()
         self.status_queue = queue.Queue()
         self.is_scanning = False
+        self.is_organizing = False
         self.scanned_files = []
+        self.total_files = 0
+        self.processed_files = 0
         
         # Set default directories (use raw strings for Windows paths)
         self.source_dir.set(os.path.expanduser(r"~\Documents"))
@@ -37,18 +49,43 @@ class DocumentOrganizerApp:
         
         # Start the queue consumer
         self.consume_queue()
+        
+        logger.info("GUI initialized")
     
     def _create_widgets(self):
         """Create all the GUI widgets"""
         # Style configuration
         self.style = ttk.Style()
+        
+        # Update theme_var to use current theme
+        current_theme = self.style.theme_use()
+        self.theme_var.set(current_theme)
+        
+        # Configure styles
         self.style.configure("TButton", padding=6, font=('Segoe UI', 10))
         self.style.configure("TLabel", font=('Segoe UI', 10))
         self.style.configure("Header.TLabel", font=('Segoe UI', 12, 'bold'))
         self.style.configure("Status.TLabel", font=('Segoe UI', 10, 'italic'))
+        self.style.configure("Success.TLabel", foreground='green', font=('Segoe UI', 10, 'bold'))
+        self.style.configure("Warning.TLabel", foreground='orange', font=('Segoe UI', 10, 'bold'))
+        self.style.configure("Error.TLabel", foreground='red', font=('Segoe UI', 10, 'bold'))
+        
+        # Create a notebook for tabs
+        self.notebook = ttk.Notebook(self.root)
+        
+        # Main tab
+        self.main_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.main_tab, text="Document Organizer")
+        
+        # Settings tab
+        self.settings_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.settings_tab, text="Settings")
+        
+        # Create settings widgets
+        self._create_settings_widgets()
         
         # Frame for directory selection
-        self.dir_frame = ttk.LabelFrame(self.root, text="Directory Selection", padding=(10, 5))
+        self.dir_frame = ttk.LabelFrame(self.main_tab, text="Directory Selection", padding=(10, 5))
         
         # Source directory widgets
         self.source_label = ttk.Label(self.dir_frame, text="Source Directory:")
@@ -60,16 +97,38 @@ class DocumentOrganizerApp:
         self.target_entry = ttk.Entry(self.dir_frame, textvariable=self.target_dir, width=50)
         self.target_button = ttk.Button(self.dir_frame, text="Browse...", command=self.browse_target)
         
-        # Scan button
-        self.scan_button = ttk.Button(self.dir_frame, text="Scan Files", command=self.start_scan)
+        # Scan options frame
+        self.options_frame = ttk.LabelFrame(self.main_tab, text="Processing Options", padding=(10, 5))
         
-        # Status bar
-        self.status_frame = ttk.Frame(self.root, padding=(10, 5))
+        # Batch size options
+        self.batch_label = ttk.Label(self.options_frame, text="Batch Size:")
+        self.batch_combobox = ttk.Combobox(self.options_frame, textvariable=self.batch_size, 
+                                          values=["5", "10", "20", "50", "100"], width=5)
+        self.batch_combobox.current(2)  # Default to 20
+        
+        # Scan button
+        self.scan_button = ttk.Button(self.options_frame, text="Scan Files", command=self.start_scan)
+        
+        # Status frame with detailed progress information
+        self.status_frame = ttk.LabelFrame(self.main_tab, text="Processing Status", padding=(10, 5))
+        
+        # Status indicators
         self.status_label = ttk.Label(self.status_frame, text="Ready", style="Status.TLabel")
-        self.progress_bar = ttk.Progressbar(self.status_frame, mode='indeterminate', length=200)
+        
+        # Determinate progress bar for batch processing
+        self.progress_bar = ttk.Progressbar(self.status_frame, orient='horizontal', length=400, mode='determinate')
+        
+        # Progress details
+        self.progress_details = ttk.Label(self.status_frame, text="")
+        
+        # Stats frame for processing statistics
+        self.stats_frame = ttk.Frame(self.status_frame)
+        self.processed_label = ttk.Label(self.stats_frame, text="Processed: 0")
+        self.total_label = ttk.Label(self.stats_frame, text="Total: 0")
+        self.batch_status_label = ttk.Label(self.stats_frame, text="Current Batch: 0/0")
         
         # File list frame
-        self.files_frame = ttk.LabelFrame(self.root, text="Scanned Files", padding=(10, 5))
+        self.files_frame = ttk.LabelFrame(self.main_tab, text="Scanned Files", padding=(10, 5))
         
         # Search bar
         self.search_frame = ttk.Frame(self.files_frame, padding=(0, 5))
@@ -97,14 +156,14 @@ class DocumentOrganizerApp:
         self.tree.configure(yscrollcommand=self.tree_yscroll.set)
         
         # File details frame
-        self.details_frame = ttk.LabelFrame(self.root, text="File Details", padding=(10, 5))
+        self.details_frame = ttk.LabelFrame(self.main_tab, text="File Details", padding=(10, 5))
         
         # File details
         self.details_text = ScrolledText(self.details_frame, wrap=tk.WORD, width=40, height=10)
         self.details_text.config(state=tk.DISABLED)
         
         # Bottom action frame
-        self.action_frame = ttk.Frame(self.root, padding=(10, 5))
+        self.action_frame = ttk.Frame(self.main_tab, padding=(10, 5))
         self.organize_button = ttk.Button(self.action_frame, text="Organize Files", command=self.organize_files)
         
         # Bind tree selection event
@@ -112,7 +171,14 @@ class DocumentOrganizerApp:
     
     def _setup_layout(self):
         """Setup the layout of widgets using grid"""
-        # Directory frame
+        # Place the notebook in the root window
+        self.notebook.grid(row=0, column=0, sticky='nsew')
+        
+        # Configure the root window grid
+        self.root.grid_rowconfigure(0, weight=1)
+        self.root.grid_columnconfigure(0, weight=1)
+        
+        # Directory frame (inside main tab)
         self.dir_frame.grid(row=0, column=0, columnspan=2, sticky='ew', padx=10, pady=10)
         
         self.source_label.grid(row=0, column=0, sticky='w', padx=5, pady=5)
@@ -123,12 +189,23 @@ class DocumentOrganizerApp:
         self.target_entry.grid(row=1, column=1, sticky='ew', padx=5, pady=5)
         self.target_button.grid(row=1, column=2, sticky='e', padx=5, pady=5)
         
-        self.scan_button.grid(row=2, column=1, sticky='e', padx=5, pady=10)
+        # Options frame layout
+        self.options_frame.grid(row=2, column=0, columnspan=2, sticky='ew', padx=10, pady=5)
+        self.batch_label.grid(row=0, column=0, sticky='w', padx=5, pady=5)
+        self.batch_combobox.grid(row=0, column=1, sticky='w', padx=5, pady=5)
+        self.scan_button.grid(row=0, column=2, sticky='e', padx=5, pady=5)
         
         # Status frame
         self.status_frame.grid(row=3, column=0, columnspan=2, sticky='ew', padx=10, pady=(0, 10))
-        self.status_label.grid(row=0, column=0, sticky='w')
-        self.progress_bar.grid(row=0, column=1, sticky='e', padx=10)
+        self.status_label.grid(row=0, column=0, sticky='w', padx=5, pady=5)
+        self.progress_bar.grid(row=1, column=0, columnspan=2, sticky='ew', padx=5, pady=5)
+        self.progress_details.grid(row=2, column=0, sticky='w', padx=5, pady=5)
+        
+        # Statistics frame
+        self.stats_frame.grid(row=3, column=0, columnspan=2, sticky='ew', padx=5, pady=5)
+        self.processed_label.grid(row=0, column=0, sticky='w', padx=20, pady=2)
+        self.total_label.grid(row=0, column=1, sticky='w', padx=20, pady=2)
+        self.batch_status_label.grid(row=0, column=2, sticky='w', padx=20, pady=2)
         
         # Files frame
         self.files_frame.grid(row=1, column=0, sticky='nsew', padx=10, pady=10)
@@ -148,10 +225,10 @@ class DocumentOrganizerApp:
         self.action_frame.grid(row=2, column=0, columnspan=2, sticky='e', padx=10, pady=10)
         self.organize_button.pack(side=tk.RIGHT)
         
-        # Configure grid weights
-        self.root.grid_columnconfigure(0, weight=3)
-        self.root.grid_columnconfigure(1, weight=2)
-        self.root.grid_rowconfigure(1, weight=1)
+        # Configure grid weights for main_tab (not the root)
+        self.main_tab.grid_columnconfigure(0, weight=3)
+        self.main_tab.grid_columnconfigure(1, weight=2)
+        self.main_tab.grid_rowconfigure(1, weight=1)
         
         self.dir_frame.grid_columnconfigure(1, weight=1)
         self.files_frame.grid_columnconfigure(0, weight=1)
@@ -198,7 +275,16 @@ class DocumentOrganizerApp:
         
         self.scanned_files = []
         self.is_scanning = True
+        self.total_files = 0
+        self.processed_files = 0
+        
+        # Reset progress indicators
+        self.progress_bar.config(mode='indeterminate')
         self.progress_bar.start(10)
+        self.progress_details.config(text="Initializing scan...")
+        self.processed_label.config(text="Processed: 0")
+        self.total_label.config(text="Total: 0")
+        self.batch_status_label.config(text="Current Batch: 0/0")
         
         # Update status
         self.status_queue.put(("status", "Scanning files..."))
@@ -211,9 +297,23 @@ class DocumentOrganizerApp:
     def scan_files_thread(self, directory):
         """Thread function to scan files"""
         try:
-            files = self.analyzer.scan_directory(directory)
+            # Get the batch size from the GUI
+            batch_size = self.batch_size.get()
+            
+            # Progress callback function
+            def progress_callback(processed, total, status_message):
+                self.status_queue.put(("progress", {
+                    "processed": processed,
+                    "total": total,
+                    "status": status_message,
+                    "percentage": int((processed / max(1, total)) * 100)
+                }))
+            
+            # Scan the directory with progress tracking
+            files = self.analyzer.scan_directory(directory, batch_size=batch_size, callback=progress_callback)
             self.status_queue.put(("files", files))
         except Exception as e:
+            logger.error(f"Error scanning directory: {str(e)}")
             self.status_queue.put(("error", str(e)))
         finally:
             self.status_queue.put(("complete", None))
@@ -228,8 +328,29 @@ class DocumentOrganizerApp:
                     self.status_label.config(text=message)
                 
                 elif message_type == "progress":
-                    # Update the progress indicator if needed
-                    pass
+                    # Update progress indicators with real-time information
+                    progress_data = message
+                    processed = progress_data.get("processed", 0)
+                    total = progress_data.get("total", 0) 
+                    percentage = progress_data.get("percentage", 0)
+                    status = progress_data.get("status", "")
+                    
+                    # Update progress bar
+                    self.progress_bar.config(mode='determinate')
+                    self.progress_bar["value"] = percentage
+                    
+                    # Update stats labels
+                    self.processed_label.config(text=f"Processed: {processed}")
+                    self.total_label.config(text=f"Total: {total}")
+                    
+                    # Calculate current batch
+                    batch_size = self.batch_size.get()
+                    current_batch = (processed // batch_size) + 1
+                    total_batches = (total + batch_size - 1) // batch_size
+                    self.batch_status_label.config(text=f"Batch: {current_batch}/{total_batches}")
+                    
+                    # Update detailed progress text
+                    self.progress_details.config(text=f"{status} ({percentage}% complete)")
                 
                 elif message_type == "files":
                     self.scanned_files = message
@@ -242,9 +363,15 @@ class DocumentOrganizerApp:
                     self.status_label.config(text="Ready")
                 
                 elif message_type == "complete":
-                    self.is_scanning = False
-                    self.progress_bar.stop()
-                    self.status_label.config(text=f"Completed scanning {len(self.scanned_files)} files")
+                    if self.is_scanning:
+                        self.is_scanning = False
+                        self.progress_bar.stop()
+                        self.status_label.config(text=f"Completed scanning {len(self.scanned_files)} files")
+                    elif self.is_organizing:
+                        self.is_organizing = False
+                        self.progress_bar.stop()
+                        self.status_label.config(text="Organization complete")
+                        self.progress_details.config(text="All files have been organized")
                 
                 self.status_queue.task_done()
                 
@@ -358,8 +485,16 @@ class DocumentOrganizerApp:
                 return
         
         # Start organizing files
-        self.status_label.config(text="Organizing files...")
+        self.is_organizing = True
+        
+        # Reset progress indicators
+        self.progress_bar.config(mode='indeterminate')
         self.progress_bar.start(10)
+        self.status_label.config(text="Organizing files...")
+        self.progress_details.config(text="Preparing to organize files...")
+        self.processed_label.config(text=f"Files: {len(self.scanned_files)}")
+        self.total_label.config(text="Copying: 0")
+        self.batch_status_label.config(text="")
         
         # Start organization thread
         organize_thread = threading.Thread(
@@ -369,10 +504,154 @@ class DocumentOrganizerApp:
         organize_thread.daemon = True
         organize_thread.start()
     
+    def apply_theme(self):
+        """Apply the selected theme and update the UI"""
+        theme = self.theme_var.get()
+        try:
+            # Apply the theme
+            self.style.theme_use(theme)
+            messagebox.showinfo("Theme Changed", f"Theme changed to: {theme}")
+            logger.info(f"Changed theme to: {theme}")
+        except Exception as e:
+            logger.error(f"Error changing theme: {str(e)}")
+            messagebox.showerror("Error", f"Could not apply theme: {str(e)}")
+    
+    def save_batch_size(self):
+        """Save the current batch size as the default"""
+        try:
+            batch_size = self.batch_size.get()
+            # We would normally save this to a config file
+            # For now, we'll just show a message
+            messagebox.showinfo("Settings Saved", f"Default batch size set to: {batch_size}")
+            logger.info(f"Default batch size saved: {batch_size}")
+        except Exception as e:
+            logger.error(f"Error saving batch size: {str(e)}")
+            messagebox.showerror("Error", f"Could not save settings: {str(e)}")
+            
+    def save_directory(self, dir_type):
+        """Save the current directory as the default
+        
+        Args:
+            dir_type: Type of directory ('source' or 'target')
+        """
+        try:
+            if dir_type == "source":
+                directory = self.source_var.get()
+                if not directory:
+                    messagebox.showwarning("Warning", "Please select a source directory first")
+                    return
+                setting_name = "Default source directory"
+            elif dir_type == "target":
+                directory = self.target_var.get()
+                if not directory:
+                    messagebox.showwarning("Warning", "Please select a target directory first")
+                    return
+                setting_name = "Default target directory"
+            else:
+                return
+                
+            # We would normally save this to a config file
+            # For now, we'll just show a message
+            messagebox.showinfo("Settings Saved", f"{setting_name} set to: {directory}")
+            logger.info(f"{setting_name} saved: {directory}")
+        except Exception as e:
+            logger.error(f"Error saving directory setting: {str(e)}")
+            messagebox.showerror("Error", f"Could not save directory setting: {str(e)}")
+    
+    def _create_settings_widgets(self):
+        """Create widgets for the settings tab"""
+        # App settings frame
+        self.app_settings_frame = ttk.LabelFrame(self.settings_tab, text="Application Settings", padding=(10, 5))
+        
+        # Performance settings
+        self.performance_frame = ttk.Frame(self.app_settings_frame)
+        ttk.Label(self.performance_frame, text="Default Batch Size:").grid(row=0, column=0, sticky='w', padx=5, pady=5)
+        
+        # Default batch size setting
+        default_batch_combobox = ttk.Combobox(self.performance_frame, textvariable=self.batch_size, 
+                                            values=["5", "10", "20", "50", "100"], width=5)
+        default_batch_combobox.current(2)  # Default to 20
+        default_batch_combobox.grid(row=0, column=1, sticky='w', padx=5, pady=5)
+        
+        # Save settings button
+        save_settings_button = ttk.Button(self.performance_frame, text="Save as Default", 
+                                        command=self.save_batch_size)
+        save_settings_button.grid(row=0, column=2, sticky='w', padx=5, pady=5)
+        
+        # Directory defaults
+        self.dir_settings_frame = ttk.Frame(self.app_settings_frame)
+        ttk.Label(self.dir_settings_frame, text="Default Directories:").grid(row=0, column=0, sticky='w', padx=5, pady=5)
+        
+        # Default source dir setting
+        ttk.Label(self.dir_settings_frame, text="Source:").grid(row=1, column=0, sticky='w', padx=5, pady=5)
+        save_source_button = ttk.Button(self.dir_settings_frame, text="Use Current", 
+                                      command=lambda: self.save_directory("source"))
+        save_source_button.grid(row=1, column=1, sticky='w', padx=5, pady=5)
+        
+        # Default target dir setting
+        ttk.Label(self.dir_settings_frame, text="Target:").grid(row=2, column=0, sticky='w', padx=5, pady=5)
+        save_target_button = ttk.Button(self.dir_settings_frame, text="Use Current", 
+                                      command=lambda: self.save_directory("target"))
+        save_target_button.grid(row=2, column=1, sticky='w', padx=5, pady=5)
+        
+        # UI settings
+        self.ui_frame = ttk.Frame(self.app_settings_frame)
+        ttk.Label(self.ui_frame, text="Interface Theme:").grid(row=0, column=0, sticky='w', padx=5, pady=5)
+        
+        # Theme selector
+        theme_names = list(self.style.theme_names())
+        theme_combobox = ttk.Combobox(self.ui_frame, textvariable=self.theme_var, values=theme_names, width=10)
+        theme_combobox.grid(row=0, column=1, sticky='w', padx=5, pady=5)
+        
+        # Apply theme button
+        apply_theme_button = ttk.Button(self.ui_frame, text="Apply Theme", 
+                                      command=self.apply_theme)
+        apply_theme_button.grid(row=0, column=2, sticky='w', padx=5, pady=5)
+        
+        # About section
+        self.about_frame = ttk.LabelFrame(self.settings_tab, text="About", padding=(10, 5))
+        
+        # App info
+        app_info = ScrolledText(self.about_frame, wrap=tk.WORD, width=60, height=10)
+        app_info.insert(tk.END, "AI Document Organizer\n\n")
+        app_info.insert(tk.END, "Version 1.0\n\n")
+        app_info.insert(tk.END, "This application uses Google Gemini Flash 2.0 AI to analyze and organize documents.\n\n")
+        app_info.insert(tk.END, "Supported file types:\n")
+        app_info.insert(tk.END, "- CSV files (.csv)\n")
+        app_info.insert(tk.END, "- Excel spreadsheets (.xlsx)\n")
+        app_info.insert(tk.END, "- HTML documents (.html)\n")
+        app_info.insert(tk.END, "- Markdown documents (.md)\n")
+        app_info.insert(tk.END, "- Text files (.txt)\n")
+        app_info.insert(tk.END, "- Word documents (.docx)\n\n")
+        app_info.config(state=tk.DISABLED)
+        
+        # Layout settings widgets
+        self.app_settings_frame.pack(fill='x', expand=False, padx=10, pady=10)
+        self.performance_frame.pack(fill='x', expand=False, padx=5, pady=5)
+        self.dir_settings_frame.pack(fill='x', expand=False, padx=5, pady=5)
+        self.ui_frame.pack(fill='x', expand=False, padx=5, pady=5)
+        self.about_frame.pack(fill='both', expand=True, padx=10, pady=10)
+        app_info.pack(fill='both', expand=True, padx=5, pady=5)
+    
     def organize_files_thread(self, files, target_dir):
         """Thread function to organize files"""
         try:
-            result = self.organizer.organize_files(files, target_dir)
+            # Define progress callback for organization
+            def organize_progress_callback(current, total, filename):
+                percentage = int((current / total) * 100)
+                self.status_queue.put(("progress", {
+                    "processed": current,
+                    "total": total,
+                    "status": f"Organizing file: {os.path.basename(filename)}",
+                    "percentage": percentage
+                }))
+                # Update organization-specific labels
+                self.status_queue.put(("status", f"Organizing files ({percentage}%)"))
+                
+            # Pass the callback to the organizer
+            result = self.organizer.organize_files(files, target_dir, callback=organize_progress_callback)
+            
+            # Update with final results
             self.status_queue.put(("status", f"Organized {result['success']} files. {result['failed']} failed."))
             
             if result['failed'] > 0:
@@ -381,8 +660,16 @@ class DocumentOrganizerApp:
                     failed_files += "..."
                 self.status_queue.put(("error", f"Failed to organize some files: {failed_files}"))
             else:
+                self.status_queue.put(("progress", {
+                    "processed": len(files),
+                    "total": len(files),
+                    "status": "Organization complete!",
+                    "percentage": 100
+                }))
                 messagebox.showinfo("Success", f"Successfully organized {result['success']} files into {target_dir}")
         except Exception as e:
+            logger.error(f"Error organizing files: {str(e)}")
             self.status_queue.put(("error", f"Error organizing files: {str(e)}"))
         finally:
+            self.is_organizing = False
             self.status_queue.put(("complete", None))

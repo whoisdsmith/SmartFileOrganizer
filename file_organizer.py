@@ -12,13 +12,14 @@ class FileOrganizer:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
     
-    def organize_files(self, analyzed_files, target_dir):
+    def organize_files(self, analyzed_files, target_dir, callback=None):
         """
         Organize files based on their AI analysis
         
         Args:
             analyzed_files: List of file information dictionaries with AI analysis
             target_dir: Target directory for organized files
+            callback: Optional callback function for progress updates, takes (current, total, filename)
             
         Returns:
             Dictionary with organization results
@@ -45,9 +46,14 @@ class FileOrganizer:
                 os.makedirs(category_dir)
         
         # Now organize files
-        for file_info in analyzed_files:
+        total_files = len(analyzed_files)
+        for index, file_info in enumerate(analyzed_files):
             try:
                 source_path = file_info["path"]
+                
+                # Update progress if callback provided
+                if callback:
+                    callback(index, total_files, source_path)
                 
                 # Skip if source doesn't exist
                 if not os.path.exists(source_path):
@@ -90,6 +96,10 @@ class FileOrganizer:
                 result["failed"] += 1
                 result["failed_files"].append(file_info.get("filename", "Unknown"))
         
+        # Final callback with completed status
+        if callback and total_files > 0:
+            callback(total_files, total_files, "Completed")
+            
         return result
     
     def _create_metadata_file(self, file_info, target_path):

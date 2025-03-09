@@ -6,8 +6,8 @@ import ctypes
 from pathlib import Path
 
 # Add src directory to the path
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
-from gui import DocumentOrganizerApp
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from src.gui import DocumentOrganizerApp
 
 def setup_logging():
     """Set up logging for the application"""

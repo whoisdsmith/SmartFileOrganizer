@@ -6,8 +6,8 @@ import multiprocessing
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 
-from file_parser import FileParser
-from ai_analyzer import AIAnalyzer
+from .file_parser import FileParser
+from .ai_analyzer import AIAnalyzer
 
 logger = logging.getLogger("AIDocumentOrganizer")
 

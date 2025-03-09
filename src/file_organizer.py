@@ -5,8 +5,8 @@ import time
 from pathlib import Path
 import logging
 
-from utils import sanitize_filename
-from ai_analyzer import AIAnalyzer
+from .utils import sanitize_filename
+from .ai_analyzer import AIAnalyzer
 
 class FileOrganizer:
     """

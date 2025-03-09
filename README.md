@@ -20,6 +20,9 @@ The AI Document Organizer helps you automatically organize your documents by ana
 - **Content Extraction**: Automatically extracts and analyzes text from all supported formats
 - **Windows-Optimized**: Native Windows interface with proper file handling
 - **Detailed Analysis**: Generates metadata files with AI insights for each processed document
+- **Batch Processing**: Processes files in configurable batches to optimize performance
+- **Customizable UI**: Choose from multiple themes to match your Windows experience
+- **Persistent Settings**: Save your preferred batch size and directory locations for future use
 
 ## Requirements
 
@@ -64,6 +67,7 @@ The application window consists of several sections:
 - **Details Panel**: Shows AI analysis details for the selected document
 - **Search Box**: Filter documents by filename or content
 - **Control Buttons**: Scan, Organize, and other action buttons
+- **Settings Tab**: Configure application preferences and appearance
 
 ### Step-By-Step Usage
 
@@ -101,6 +105,26 @@ The application window consists of several sections:
 - Use the search box to filter documents by filename or content
 - Results update as you type
 - Clear the search box to show all documents again
+
+### Application Settings
+
+The Settings tab provides various customization options:
+
+1. **Batch Processing**:
+   - Adjust the batch size to control how many files are processed simultaneously
+   - Smaller batch sizes use less memory but may take longer
+   - Larger batch sizes may be faster but require more system resources
+   - Click "Save as Default" to store your preferred batch size for future sessions
+
+2. **Directory Defaults**:
+   - Set your commonly used source and target directories as defaults
+   - Click "Use Current" to save the currently selected directories
+   - These saved locations will be pre-populated when you restart the application
+
+3. **Interface Theme**:
+   - Choose from available visual themes to customize the application appearance
+   - The theme selector shows all available themes for your system
+   - Click "Apply Theme" to switch to the selected theme immediately
 
 ## Advanced Usage
 

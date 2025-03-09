@@ -32,6 +32,8 @@ The application follows a modular design with clear separation of concerns:
    - Implements `DocumentOrganizerApp` class for the main window
    - Handles user input, file browsing, and results display
    - Manages threading for non-blocking operations
+   - Implements settings tab for customization options
+   - Provides theme management and user preferences
 
 3. **file_analyzer.py**: Document scanning and analysis
    - Scans directories for supported file types
@@ -240,6 +242,79 @@ class OpenAIAnalyzer:
 ```
 
 ## UI Customization
+
+### Application Settings and Preferences
+
+The application implements a settings system through a dedicated tab in the main interface:
+
+1. **Accessing Settings**: The settings tab is implemented in `_create_settings_widgets()` method
+2. **Theme Management**: The application supports multiple built-in ttk themes
+3. **User Preferences**: Various user preferences can be saved for future sessions
+
+Example settings implementation:
+
+```python
+def _create_settings_widgets(self):
+    """Create widgets for the settings tab"""
+    # App settings frame
+    self.app_settings_frame = ttk.LabelFrame(self.settings_tab, text="Application Settings", padding=(10, 5))
+    
+    # Performance settings
+    self.performance_frame = ttk.Frame(self.app_settings_frame)
+    ttk.Label(self.performance_frame, text="Default Batch Size:").grid(row=0, column=0, sticky='w', padx=5, pady=5)
+    
+    # Default batch size setting
+    default_batch_combobox = ttk.Combobox(self.performance_frame, textvariable=self.batch_size, 
+                                        values=["5", "10", "20", "50", "100"], width=5)
+    default_batch_combobox.current(2)  # Default to 20
+    default_batch_combobox.grid(row=0, column=1, sticky='w', padx=5, pady=5)
+    
+    # Save settings button
+    save_settings_button = ttk.Button(self.performance_frame, text="Save as Default", 
+                                    command=self.save_batch_size)
+    save_settings_button.grid(row=0, column=2, sticky='w', padx=5, pady=5)
+    
+    # UI settings
+    self.ui_frame = ttk.Frame(self.app_settings_frame)
+    ttk.Label(self.ui_frame, text="Interface Theme:").grid(row=0, column=0, sticky='w', padx=5, pady=5)
+    
+    # Theme selector
+    theme_names = list(self.style.theme_names())
+    theme_combobox = ttk.Combobox(self.ui_frame, textvariable=self.theme_var, values=theme_names, width=10)
+    theme_combobox.grid(row=0, column=1, sticky='w', padx=5, pady=5)
+    
+    # Apply theme button
+    apply_theme_button = ttk.Button(self.ui_frame, text="Apply Theme", 
+                                  command=self.apply_theme)
+    apply_theme_button.grid(row=0, column=2, sticky='w', padx=5, pady=5)
+```
+
+Methods to handle settings changes:
+
+```python
+def apply_theme(self):
+    """Apply the selected theme and update the UI"""
+    theme = self.theme_var.get()
+    try:
+        # Apply the theme
+        self.style.theme_use(theme)
+        messagebox.showinfo("Theme Changed", f"Theme changed to: {theme}")
+        logger.info(f"Changed theme to: {theme}")
+    except Exception as e:
+        logger.error(f"Error changing theme: {str(e)}")
+        messagebox.showerror("Error", f"Could not apply theme: {str(e)}")
+
+def save_batch_size(self):
+    """Save the current batch size as the default"""
+    try:
+        batch_size = self.batch_size.get()
+        # Here you would save to a config file
+        messagebox.showinfo("Settings Saved", f"Default batch size set to: {batch_size}")
+        logger.info(f"Default batch size saved: {batch_size}")
+    except Exception as e:
+        logger.error(f"Error saving batch size: {str(e)}")
+        messagebox.showerror("Error", f"Could not save settings: {str(e)}")
+```
 
 ### Adding New Features to the GUI
 

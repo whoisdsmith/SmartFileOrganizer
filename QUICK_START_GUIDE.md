@@ -71,6 +71,22 @@ pip install beautifulsoup4 chardet python-docx google-generativeai numpy openai 
 2. You'll see documents organized into category folders
 3. Each document has an accompanying .meta.txt file with AI analysis
 
+## Customizing the Application
+
+### Adjusting Settings
+1. Click on the "Settings" tab
+2. Adjust your preferences:
+   - Batch Size: Control how many files are processed at once
+   - Theme: Change the visual appearance of the application
+   - Default Directories: Save commonly used locations
+
+### Saving Your Preferences
+1. Change settings to your preferred values
+2. Click the relevant "Save" or "Apply" button:
+   - "Save as Default" for batch size
+   - "Use Current" for directory defaults
+   - "Apply Theme" for visual theme changes
+
 ## Supported File Formats
 
 The application can analyze and organize:

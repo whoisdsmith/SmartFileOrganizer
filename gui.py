@@ -192,6 +192,7 @@ class DocumentOrganizerApp:
         # Bottom action frame
         self.action_frame = ttk.Frame(self.main_tab, padding=(10, 5))
         self.organize_button = ttk.Button(self.action_frame, text="Organize Files", command=self.organize_files)
+        self.report_button = ttk.Button(self.action_frame, text="Generate Report", command=self.generate_folder_report)
         
         # Bind tree selection event
         self.tree.bind("<<TreeviewSelect>>", self.show_file_details)
@@ -250,7 +251,8 @@ class DocumentOrganizerApp:
         
         # Action frame
         self.action_frame.grid(row=2, column=0, columnspan=2, sticky='e', padx=10, pady=10)
-        self.organize_button.pack(side=tk.RIGHT)
+        self.report_button.pack(side=tk.RIGHT, padx=(0, 5))
+        self.organize_button.pack(side=tk.RIGHT, padx=(0, 5))
         
         # Configure grid weights for main_tab (not the root)
         self.main_tab.grid_columnconfigure(0, weight=3)
@@ -386,8 +388,13 @@ class DocumentOrganizerApp:
                 elif message_type == "error":
                     messagebox.showerror("Error", message)
                     self.is_scanning = False
+                    self.is_organizing = False
                     self.progress_bar.stop()
                     self.status_label.config(text="Ready")
+                
+                elif message_type == "success":
+                    messagebox.showinfo("Success", message)
+                    self.progress_details.config(text=message)
                 
                 elif message_type == "complete":
                     if self.is_scanning:
@@ -399,6 +406,10 @@ class DocumentOrganizerApp:
                         self.progress_bar.stop()
                         self.status_label.config(text="Organization complete")
                         self.progress_details.config(text="All files have been organized")
+                    else:
+                        # For report generation and other tasks
+                        self.progress_bar.stop()
+                        self.status_label.config(text="Task completed")
                 
                 self.status_queue.task_done()
                 
@@ -486,6 +497,9 @@ class DocumentOrganizerApp:
         details += f"Category: {file_info.get('category', '')}\n"
         details += f"Keywords: {', '.join(file_info.get('keywords', []))}\n"
         
+        if 'theme' in file_info:
+            details += f"Theme: {file_info.get('theme', '')}\n"
+        
         if 'summary' in file_info:
             details += f"\nSummary:\n{file_info.get('summary', '')}\n"
         
@@ -494,8 +508,79 @@ class DocumentOrganizerApp:
             for key, value in file_info.get('metadata', {}).items():
                 details += f"- {key}: {value}\n"
         
-        self.details_text.insert(tk.END, details)
-        self.details_text.config(state=tk.DISABLED)
+        # Add related documents section if we have enough documents
+        if len(self.scanned_files) > 1:
+            details += "\n" + "-" * 40 + "\n"
+            details += "Finding related documents...\n"
+            self.details_text.insert(tk.END, details)
+            self.details_text.config(state=tk.DISABLED)
+            
+            # Find related documents in a separate thread to avoid freezing UI
+            threading.Thread(target=self.find_related_documents_thread, args=(file_info,), daemon=True).start()
+        else:
+            self.details_text.insert(tk.END, details)
+            self.details_text.config(state=tk.DISABLED)
+    
+    def find_related_documents_thread(self, file_info):
+        """Thread function to find related documents"""
+        try:
+            # Find similar documents using the AI analyzer
+            similar_docs = self.analyzer.find_similar_documents(file_info, self.scanned_files, max_results=3)
+            
+            # Update the details text with the results
+            self.details_text.config(state=tk.NORMAL)
+            
+            # Find where the "Finding related documents..." text starts
+            search_text = "Finding related documents..."
+            start_pos = "1.0"
+            while True:
+                pos = self.details_text.search(search_text, start_pos, tk.END)
+                if not pos:
+                    break
+                line = pos.split('.')[0]
+                start_pos = f"{line}.0"
+                end_pos = f"{int(line) + 1}.0"
+                self.details_text.delete(start_pos, end_pos)
+                break
+            
+            # Add the related documents section
+            if similar_docs:
+                related_text = "Related Documents:\n\n"
+                for i, doc in enumerate(similar_docs):
+                    score = doc.get("similarity_score", 0)
+                    similarity = "High" if score >= 5 else "Medium" if score >= 3 else "Low"
+                    related_text += f"{i+1}. {doc.get('filename', '')}\n"
+                    related_text += f"   Category: {doc.get('category', '')}\n"
+                    related_text += f"   Similarity: {similarity} (Score: {score})\n"
+                    if 'keywords' in doc:
+                        related_text += f"   Keywords: {', '.join(doc.get('keywords', []))}\n"
+                    related_text += "\n"
+            else:
+                related_text = "No related documents found.\n"
+            
+            # Insert the related documents text
+            self.details_text.insert(tk.END, related_text)
+            self.details_text.config(state=tk.DISABLED)
+        except Exception as e:
+            # In case of error, update the text 
+            self.details_text.config(state=tk.NORMAL)
+            
+            # Find where the "Finding related documents..." text starts
+            search_text = "Finding related documents..."
+            start_pos = "1.0"
+            while True:
+                pos = self.details_text.search(search_text, start_pos, tk.END)
+                if not pos:
+                    break
+                line = pos.split('.')[0]
+                start_pos = f"{line}.0"
+                end_pos = f"{int(line) + 1}.0"
+                self.details_text.delete(start_pos, end_pos)
+                break
+            
+            self.details_text.insert(tk.END, f"Error finding related documents: {str(e)}\n")
+            self.details_text.config(state=tk.DISABLED)
+            logger.error(f"Error finding related documents: {str(e)}")
     
     def organize_files(self):
         """Organize the files based on AI analysis"""
@@ -619,6 +704,89 @@ class DocumentOrganizerApp:
         except Exception as e:
             logger.error(f"Error saving organization rules: {str(e)}")
             messagebox.showerror("Error", f"Could not save organization rules: {str(e)}")
+            
+    def generate_folder_report(self):
+        """Generate a comprehensive report of files in a folder"""
+        # Ask user to select a folder
+        folder_path = filedialog.askdirectory(
+            initialdir=self.target_dir.get(),
+            title="Select Folder to Generate Report"
+        )
+        
+        if not folder_path:
+            return
+            
+        # Normalize path
+        folder_path = os.path.normpath(folder_path)
+        
+        if not os.path.isdir(folder_path):
+            messagebox.showerror("Error", f"Selected path is not a directory: {folder_path}")
+            return
+            
+        # Check if there are files in this directory
+        has_files = False
+        for root, dirs, files in os.walk(folder_path):
+            # Skip metadata files for checking
+            if any(f for f in files if not f.endswith('.meta.txt') and not f.endswith('_summary.txt') and not f.endswith('_Report.md')):
+                has_files = True
+                break
+                
+        if not has_files:
+            messagebox.showwarning("Warning", "No files found in the selected folder. The report may be empty.")
+            if not messagebox.askyesno("Continue?", "Continue generating report?"):
+                return
+        
+        # Ask whether to include summaries
+        include_summaries = messagebox.askyesno(
+            "Include Summaries", 
+            "Include detailed content summaries in the report?\n\n" +
+            "Including summaries creates a more comprehensive report but makes it larger."
+        )
+        
+        # Update status
+        self.status_label.config(text="Generating folder report...")
+        self.progress_bar.config(mode='indeterminate')
+        self.progress_bar.start(10)
+        self.progress_details.config(text=f"Analyzing folder: {os.path.basename(folder_path)}")
+        
+        # Run in a thread to avoid freezing the UI
+        report_thread = threading.Thread(
+            target=self.generate_report_thread,
+            args=(folder_path, include_summaries)
+        )
+        report_thread.daemon = True
+        report_thread.start()
+        
+    def generate_report_thread(self, folder_path, include_summaries):
+        """Thread function to generate a folder report"""
+        try:
+            # Generate the report
+            report_path = self.organizer.generate_folder_report(folder_path, include_summaries)
+            
+            if report_path:
+                self.status_queue.put(("status", "Report generated successfully"))
+                self.status_queue.put(("success", f"Report saved to: {report_path}"))
+                
+                # Ask if user wants to open the report
+                if messagebox.askyesno("Report Generated", 
+                                      f"Report has been generated at:\n{report_path}\n\nOpen the report now?"):
+                    # Use the operating system's default application to open the file
+                    import subprocess
+                    try:
+                        if os.name == 'nt':  # Windows
+                            os.startfile(report_path)
+                        elif os.name == 'posix':  # macOS or Linux
+                            subprocess.call(('xdg-open', report_path))
+                    except Exception as e:
+                        logger.error(f"Error opening report: {str(e)}")
+                        messagebox.showerror("Error", f"Could not open the report: {str(e)}")
+            else:
+                self.status_queue.put(("error", "Failed to generate report"))
+        except Exception as e:
+            logger.error(f"Error generating folder report: {str(e)}")
+            self.status_queue.put(("error", str(e)))
+        finally:
+            self.status_queue.put(("complete", None))
     
     def _create_settings_widgets(self):
         """Create widgets for the settings tab"""

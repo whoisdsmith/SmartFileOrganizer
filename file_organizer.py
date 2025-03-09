@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import time
 from pathlib import Path
@@ -206,3 +207,128 @@ class FileOrganizer:
             self.logger.info(f"Created summary file: {summary_path}")
         except Exception as e:
             self.logger.error(f"Error creating summary file for {target_path}: {str(e)}")
+            
+    def generate_folder_report(self, folder_path, include_summaries=True):
+        """
+        Generate a report of the folder contents with AI analysis
+        
+        Args:
+            folder_path: Path to the folder for which to generate the report
+            include_summaries: Whether to include content summaries in the report
+            
+        Returns:
+            Path to the generated report file
+        """
+        try:
+            if not os.path.exists(folder_path) or not os.path.isdir(folder_path):
+                self.logger.error(f"Invalid folder path for report: {folder_path}")
+                return None
+                
+            # Get the folder name for the report title
+            folder_name = os.path.basename(folder_path)
+            report_path = os.path.join(folder_path, f"{folder_name}_Report.md")
+            
+            # Collect information about files in the folder and subfolders
+            file_data = []
+            category_stats = {}
+            total_files = 0
+            
+            # Walk through the directory structure
+            for root, dirs, files in os.walk(folder_path):
+                # Skip metadata and summary files
+                files = [f for f in files if not f.endswith('.meta.txt') and not f.endswith('_summary.txt') and not f.endswith('_Report.md')]
+                
+                for file in files:
+                    total_files += 1
+                    file_path = os.path.join(root, file)
+                    relative_path = os.path.relpath(file_path, folder_path)
+                    
+                    # Check if metadata file exists
+                    meta_path = f"{file_path}.meta.txt"
+                    file_info = {"filename": file, "path": relative_path}
+                    
+                    if os.path.exists(meta_path):
+                        # Extract category and other info from metadata
+                        with open(meta_path, 'r', encoding='utf-8') as mf:
+                            meta_content = mf.read()
+                            
+                            # Extract category
+                            category_match = re.search(r'Category:\s*(.+?)$', meta_content, re.MULTILINE)
+                            if category_match:
+                                category = category_match.group(1).strip()
+                                file_info["category"] = category
+                                
+                                # Update category statistics
+                                if category in category_stats:
+                                    category_stats[category] += 1
+                                else:
+                                    category_stats[category] = 1
+                            
+                            # Extract keywords
+                            keywords_match = re.search(r'Keywords:\s*(.+?)$', meta_content, re.MULTILINE)
+                            if keywords_match:
+                                keywords = keywords_match.group(1).strip()
+                                file_info["keywords"] = keywords
+                            
+                            # Extract summary if needed
+                            if include_summaries:
+                                summary_match = re.search(r'Summary:\s*\n(.*?)(?:\n\n|\nMetadata:|$)', meta_content, re.DOTALL)
+                                if summary_match:
+                                    summary = summary_match.group(1).strip()
+                                    file_info["summary"] = summary
+                    
+                    file_data.append(file_info)
+            
+            # Generate the report
+            with open(report_path, 'w', encoding='utf-8') as f:
+                # Report header
+                f.write(f"# Folder Content Report: {folder_name}\n\n")
+                f.write(f"Generated on: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                f.write(f"Total files: {total_files}\n\n")
+                
+                # Category statistics
+                f.write("## Category Distribution\n\n")
+                if category_stats:
+                    for category, count in sorted(category_stats.items(), key=lambda x: x[1], reverse=True):
+                        percentage = (count / total_files) * 100
+                        f.write(f"- **{category}**: {count} files ({percentage:.1f}%)\n")
+                else:
+                    f.write("No category information available.\n")
+                
+                f.write("\n## File List\n\n")
+                
+                # Group files by category
+                by_category = {}
+                for file_info in file_data:
+                    category = file_info.get("category", "Uncategorized")
+                    if category not in by_category:
+                        by_category[category] = []
+                    by_category[category].append(file_info)
+                
+                # List files by category
+                for category, files in sorted(by_category.items()):
+                    f.write(f"### {category}\n\n")
+                    
+                    for file_info in sorted(files, key=lambda x: x["filename"]):
+                        f.write(f"#### {file_info['filename']}\n\n")
+                        f.write(f"Path: {file_info['path']}\n\n")
+                        
+                        if "keywords" in file_info:
+                            f.write(f"Keywords: {file_info['keywords']}\n\n")
+                            
+                        if include_summaries and "summary" in file_info:
+                            f.write(f"Summary:\n{file_info['summary']}\n\n")
+                        
+                        f.write("---\n\n")
+                
+                # Footer
+                f.write("\n## About this Report\n\n")
+                f.write("This report was automatically generated by AI Document Organizer using Google Gemini Flash 2.0 AI analysis.\n")
+                f.write("The content categorization and summaries are AI-generated and may require human verification for critical information.\n")
+            
+            self.logger.info(f"Generated folder report: {report_path}")
+            return report_path
+            
+        except Exception as e:
+            self.logger.error(f"Error generating folder report: {str(e)}")
+            return None

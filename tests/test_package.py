@@ -19,9 +19,12 @@ def test_imports():
         from src.ai_analyzer import AIAnalyzer
         from src.file_analyzer import FileAnalyzer
         from src.file_organizer import FileOrganizer
+        from src.file_parser import FileParser
         from src.settings_manager import SettingsManager
         from src.utils import get_readable_size, sanitize_filename
         from src.gui import DocumentOrganizerApp
+        from src.openai_analyzer import OpenAIAnalyzer
+        from src.ai_service_factory import AIServiceFactory
         
         print("✓ All core modules imported successfully")
         return True

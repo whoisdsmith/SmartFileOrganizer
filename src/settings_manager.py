@@ -34,6 +34,11 @@ class SettingsManager:
                 "generate_summaries": True,
                 "include_metadata": True,
                 "copy_instead_of_move": True
+            },
+            "ai_service": {
+                "service_type": "google",  # 'google' or 'openai'
+                "google_api_key": "",      # Stored encrypted in actual implementation
+                "openai_api_key": ""       # Stored encrypted in actual implementation
             }
         }
         

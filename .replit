@@ -1,4 +1,4 @@
-modules = ["python-3.11"]
+modules = ["python-3.11", "python3"]
 
 [nix]
 channel = "stable-24_05"
@@ -10,24 +10,6 @@ runButton = "Project"
 name = "Project"
 mode = "parallel"
 author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "AI Document Organizer"
-
-[[workflows.workflow]]
-name = "AI Document Organizer"
-author = "agent"
-
-[workflows.workflow.metadata]
-agentRequireRestartOnSave = false
-
-[[workflows.workflow.tasks]]
-task = "packager.installForAll"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python main.py"
 
 [deployment]
 run = ["sh", "-c", "python main.py"]

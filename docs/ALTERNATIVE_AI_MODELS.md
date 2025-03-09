@@ -1,379 +1,131 @@
-# Using Alternative AI Models with the Document Organizer
+# AI Document Organizer: Alternative AI Models
 
-This guide explains how to modify the AI Document Organizer to work with alternative AI models such as OpenAI's GPT-4o.
+This document explains how to use different AI models with the AI Document Organizer application.
 
-## Using OpenAI Instead of Google Gemini
+## Supported AI Services
 
-### Step 1: Create an OpenAI API Key
+The AI Document Organizer now supports two AI services:
 
-1. Go to [OpenAI's website](https://platform.openai.com/)
-2. Create an account or log in
-3. Navigate to API Keys section
-4. Create a new API key
-5. Copy and save your API key securely
+1. **Google Gemini** (Default)
+   - Uses Google's Gemini 2.0 Flash model
+   - Provides advanced document analysis capabilities
+   - Offers efficient processing with lower token usage
 
-### Step 2: Set Up Environment Variable
+2. **OpenAI**
+   - Uses OpenAI's gpt-4o model
+   - May provide different analysis results for certain document types
+   - Requires an OpenAI API key
 
-#### Windows:
+## Configuring Your AI Service
+
+You can choose which AI service to use in several ways:
+
+### 1. Using Environment Variables
+
+Set the following environment variables:
+
 ```
-setx OPENAI_API_KEY "your-openai-api-key-here"
+AI_SERVICE_TYPE=google    # or 'openai'
+GOOGLE_API_KEY=your_google_api_key  # if using 'google'
+OPENAI_API_KEY=your_openai_api_key  # if using 'openai'
 ```
 
-#### macOS/Linux:
-```
-export OPENAI_API_KEY="your-openai-api-key-here"
-```
+### 2. Using the Settings Interface
 
-### Step 3: Create OpenAI Analyzer File
+1. Open the application
+2. Go to the "Settings" tab
+3. Find the "AI Service Configuration" section
+4. Select your preferred AI service
+5. Enter your API key
+6. Click "Save Settings"
 
-Create a new file named `openai_analyzer.py` with the following content:
+### 3. Programmatically
+
+If you're extending the application, you can use the AIServiceFactory:
 
 ```python
-import os
-import json
-from openai import OpenAI
+from src.ai_service_factory import AIServiceFactory
 
-class OpenAIAnalyzer:
-    """
-    Class for analyzing document content using OpenAI API
-    """
-    def __init__(self):
-        # Get API key from environment variable
-        api_key = os.environ.get("OPENAI_API_KEY", "")
-        if not api_key:
-            print("Warning: OPENAI_API_KEY environment variable not set.")
-        
-        # Initialize OpenAI client
-        self.client = OpenAI(api_key=api_key)
-        
-        # Use GPT-4o (the newest OpenAI model as of 2024)
-        self.model = "gpt-4o"
-        print(f"Using OpenAI model: {self.model}")
-    
-    def analyze_content(self, text, file_type):
-        """
-        Analyze document content using AI
-        
-        Args:
-            text: The document text content
-            file_type: The type of document (CSV, Excel, HTML, etc.)
-            
-        Returns:
-            Dictionary with analysis results
-        """
-        # Truncate text if too long
-        max_text_length = 25000  # Characters
-        truncated_text = text[:max_text_length]
-        if len(text) > max_text_length:
-            truncated_text += f"\n\n[Content truncated. Original length: {len(text)} characters]"
-        
-        try:
-            analysis = self._get_content_analysis(truncated_text, file_type)
-            return analysis
-        except Exception as e:
-            print(f"Error in OpenAI analysis: {str(e)}")
-            # Return basic analysis if AI fails
-            return {
-                "category": "Unclassified",
-                "keywords": ["document"],
-                "summary": "Error analyzing document content."
-            }
-    
-    def _get_content_analysis(self, text, file_type):
-        """
-        Get AI analysis of document content using OpenAI
-        
-        Args:
-            text: The document text
-            file_type: The type of document
-            
-        Returns:
-            Dictionary with analysis results
-        """
-        # Construct the prompt
-        prompt = f"""
-        Please analyze the following {file_type} document content and provide:
-        1. A category for document organization (choose the most specific appropriate category)
-        2. 3-5 keywords that represent the main topics in the document
-        3. A brief summary of the document content (max 2-3 sentences)
-        
-        Content:
-        {text}
-        
-        Return your analysis in JSON format with the following structure:
-        {{
-            "category": "Category name",
-            "keywords": ["keyword1", "keyword2", "keyword3"],
-            "summary": "Brief summary of the content"
-        }}
-        
-        Make sure to return ONLY valid JSON without any additional text or explanation.
-        """
-        
-        try:
-            # Generate content with OpenAI
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"},
-                temperature=0.2,
-                max_tokens=800
-            )
-            
-            # Extract the text response
-            response_text = response.choices[0].message.content
-            print(f"OpenAI response received: {response_text[:100]}...")
-            
-            # Parse the JSON response
-            result = json.loads(response_text)
-            
-            # Ensure all expected fields are present
-            if not all(k in result for k in ["category", "keywords", "summary"]):
-                raise ValueError("Missing required fields in AI response")
-            
-            return result
-        except Exception as e:
-            print(f"OpenAI analysis exception: {e}")
-            raise Exception(f"OpenAI analysis failed: {str(e)}")
+# Create a Google Gemini analyzer
+google_analyzer = AIServiceFactory.create_analyzer('google')
+
+# Create an OpenAI analyzer
+openai_analyzer = AIServiceFactory.create_analyzer('openai')
+
+# Let the factory choose based on environment variables
+default_analyzer = AIServiceFactory.create_analyzer()
 ```
 
-### Step 4: Modify File Analyzer
+## Comparing AI Services
 
-Update `file_analyzer.py` to use the OpenAI analyzer:
+### Google Gemini
 
-1. Open `file_analyzer.py`
-2. Add the following import at the top:
-   ```python
-   from openai_analyzer import OpenAIAnalyzer
-   ```
-3. In the `FileAnalyzer.__init__` method, modify the code to check for OpenAI API key:
-   ```python
-   def __init__(self):
-       self.parser = FileParser()
-       
-       # Check if OpenAI API key is set
-       if os.environ.get("OPENAI_API_KEY"):
-           print("Using OpenAI for document analysis")
-           self.ai_analyzer = OpenAIAnalyzer()
-       else:
-           print("Using Google Gemini for document analysis")
-           self.ai_analyzer = AIAnalyzer()
-   ```
+- **Pros**:
+  - Lower cost per token
+  - Faster processing for large documents
+  - Excellent at categorization tasks
+  - Support for Gemini 2.0 Flash model
 
-### Step 5: Update Main Application
+- **Use when**:
+  - Processing large batches of documents
+  - Working with technical or business-oriented content
+  - Cost efficiency is important
 
-Update `main.py` to change the window title:
+### OpenAI (GPT-4o)
 
-1. Open `main.py`
-2. Find the line that sets the window title:
-   ```python
-   root.title("AI Document Organizer - Powered by Google Gemini")
-   ```
-3. Replace it with a dynamic title based on which API is used:
-   ```python
-   if os.environ.get("OPENAI_API_KEY"):
-       root.title("AI Document Organizer - Powered by OpenAI")
-   else:
-       root.title("AI Document Organizer - Powered by Google Gemini")
-   ```
+- **Pros**:
+  - May provide more nuanced relationship detection
+  - Better at extracting complex themes
+  - Strong performance with creative content
+  - Advanced zero-shot understanding capabilities
 
-## Using Azure OpenAI Service
+- **Use when**:
+  - Working with creative or literary documents
+  - Relationship detection accuracy is critical
+  - Advanced summary quality is needed
 
-### Step 1: Get Azure OpenAI API Access
+## Document Relationship Detection
 
-1. Set up Azure OpenAI Service in your Azure account
-2. Deploy a model and get your API endpoint, API key, and deployment name
+Both AI services implement our four relationship types:
 
-### Step 2: Set Environment Variables
+1. **Prerequisite** - Content that should be understood before the main document
+2. **Sequential** - Content that follows as the next step after the main document
+3. **Contextual** - Content that provides supporting information for the main document
+4. **Extension** - Content that builds upon or extends the concepts in the main document
 
-```
-setx AZURE_OPENAI_KEY "your-azure-api-key"
-setx AZURE_OPENAI_ENDPOINT "https://your-resource-name.openai.azure.com"
-setx AZURE_OPENAI_DEPLOYMENT "your-deployment-name"
-```
+However, you may notice slight differences in how each AI service categorizes relationships between documents.
 
-### Step 3: Create Azure OpenAI Analyzer File
+## Fallback Behavior
 
-Create a new file named `azure_analyzer.py` with the following content:
+If the selected AI service is not available (e.g., missing API key), the application will:
 
-```python
-import os
-import json
-from openai import AzureOpenAI
+1. Attempt to use the other service if its API key is available
+2. Display a warning if no valid API keys are found
+3. Still function with basic categorization, but with reduced accuracy
 
-class AzureOpenAIAnalyzer:
-    """
-    Class for analyzing document content using Azure OpenAI Service
-    """
-    def __init__(self):
-        # Get Azure OpenAI credentials from environment variables
-        api_key = os.environ.get("AZURE_OPENAI_KEY", "")
-        api_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
-        deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "")
-        
-        if not all([api_key, api_endpoint, deployment]):
-            print("Warning: Azure OpenAI environment variables not set properly.")
-        
-        # Initialize Azure OpenAI client
-        self.client = AzureOpenAI(
-            api_key=api_key,
-            api_version="2024-02-01",
-            azure_endpoint=api_endpoint
-        )
-        
-        self.deployment = deployment
-        print(f"Using Azure OpenAI deployment: {self.deployment}")
-    
-    def analyze_content(self, text, file_type):
-        """Similar to OpenAIAnalyzer.analyze_content()"""
-        # Implementation similar to OpenAIAnalyzer
-        # ...
-    
-    def _get_content_analysis(self, text, file_type):
-        """Similar to OpenAIAnalyzer._get_content_analysis()"""
-        # Use Azure-specific API calls
-        response = self.client.chat.completions.create(
-            model=self.deployment,  # Use deployment name instead of model name
-            messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"},
-            temperature=0.2,
-            max_tokens=800
-        )
-        # Rest of implementation similar to OpenAIAnalyzer
-        # ...
-```
+## Getting API Keys
 
-### Step 4: Update File Analyzer for Azure Support
+### Google Gemini API Key
 
-Extend the `FileAnalyzer.__init__` method to check for Azure credentials:
+1. Visit [Google AI Studio](https://ai.google.dev/)
+2. Create or sign in to your Google account
+3. Create a new API key
+4. Copy the key and use it in the application
 
-```python
-def __init__(self):
-    self.parser = FileParser()
-    
-    # Check for Azure OpenAI first (it's more specific)
-    if all([
-        os.environ.get("AZURE_OPENAI_KEY"),
-        os.environ.get("AZURE_OPENAI_ENDPOINT"),
-        os.environ.get("AZURE_OPENAI_DEPLOYMENT")
-    ]):
-        print("Using Azure OpenAI for document analysis")
-        self.ai_analyzer = AzureOpenAIAnalyzer()
-    # Then check for regular OpenAI
-    elif os.environ.get("OPENAI_API_KEY"):
-        print("Using OpenAI for document analysis")
-        self.ai_analyzer = OpenAIAnalyzer()
-    # Fall back to Google Gemini
-    else:
-        print("Using Google Gemini for document analysis")
-        self.ai_analyzer = AIAnalyzer()
-```
+### OpenAI API Key
 
-## Using Anthropic's Claude
+1. Visit [OpenAI Platform](https://platform.openai.com/)
+2. Create or sign in to your OpenAI account
+3. Navigate to API keys section
+4. Create a new secret key
+5. Copy the key and use it in the application
 
-For Anthropic Claude integration, follow a similar pattern:
+## Troubleshooting
 
-1. Obtain an Anthropic API key
-2. Set it as an environment variable (`ANTHROPIC_API_KEY`)
-3. Create a `claude_analyzer.py` file implementing the same interface
-4. Update `file_analyzer.py` to check for the Anthropic API key
+If you encounter issues with your AI service:
 
-See the DEVELOPER_GUIDE.md for more detailed information on extending the application with alternative AI models.
-
-## UI Considerations with Alternative Models
-
-When using alternative AI models, the settings interface remains consistent:
-
-### Theme Management
-- The theme selection functionality works independently of the AI model used
-- All appearance settings in the Settings tab function normally regardless of model
-
-### Performance Settings
-- Batch processing works with all AI models
-- You may want to adjust batch size based on the model's speed:
-  - Smaller batches (5-10) for slower or more expensive models
-  - Larger batches (20-50) for faster models
-
-### Directory Default Settings
-- Directory preferences are stored independently of AI model selection
-- All save and recall functionality for directory defaults works across model changes
-
-## Document Relationship Detection with Different AI Models
-
-The Document Organizer's relationship detection features work with all supported AI models, but there are differences in capability and performance:
-
-### Google Gemini 2.0 Flash (Default)
-
-Our application uses Google Gemini 2.0 Flash by default, which excels at:
-- Fast document relationship detection (prerequisite, sequential, contextual, extension)
-- Accurate relationship strength scoring
-- Detailed relationship explanations
-- High-quality categorization and theme detection
-- Efficient batch processing
-
-### Relationship Detection with Alternative Models
-
-When using alternative AI models, the relationship detection prompts will be adapted:
-
-| Model | Relationship Detection Strengths | Considerations |
-|-------|----------------------------------|----------------|
-| Google Gemini 2.0 Flash | Fast processing, excellent at detecting contextual relationships | Best balance of speed and accuracy |
-| OpenAI GPT-4o | Very nuanced relationship detection, highest accuracy on complex documents | Higher cost per document, slower processing |
-| Azure OpenAI | Enterprise security with comparable performance to OpenAI | Additional configuration required |
-| Anthropic Claude | Excellent with long documents, handles complex document relationships | Modified prompts needed for best results |
-
-### Relationship Types Detected
-
-All supported AI models can detect these relationships between documents:
-
-- **Prerequisite**: Document A must be understood before Document B
-- **Sequential**: Document B naturally follows Document A in a process or timeline
-- **Contextual**: Document B provides context or background for Document A
-- **Extension**: Document B builds upon or extends the content in Document A
-
-## Comparing AI Model Performance
-
-Each AI model has different strengths for document analysis:
-
-| Model | Strengths | Limitations |
-|-------|-----------|-------------|
-| Google Gemini 2.0 Flash | Fast processing, excellent categorization, strong relationship detection | Limited token context |
-| OpenAI GPT-4o | Nuanced analysis, high accuracy, detailed relationships | Higher cost |
-| Azure OpenAI | Enterprise security, data residency, controlled fine-tuning | Configuration complexity |
-| Anthropic Claude | Long context windows, sophisticated reasoning | May require format adjustment |
-
-## Performance Considerations
-
-When switching AI models, consider these factors:
-
-1. **Cost**: Different providers have different pricing models
-2. **Speed**: Processing time varies by model
-3. **Accuracy**: Some models may be better for specific document types
-4. **Token limits**: Maximum document size varies by model
-5. **API reliability**: Uptime and rate limits differ between providers
-
-## Fallback Strategy
-
-For production use, consider implementing a fallback strategy that tries multiple AI providers if the primary one fails:
-
-```python
-def analyze_with_fallback(self, text, file_type):
-    # Try primary AI service
-    try:
-        return self.primary_analyzer.analyze_content(text, file_type)
-    except Exception as primary_error:
-        print(f"Primary AI service failed: {primary_error}")
-        
-        # Try backup service
-        try:
-            return self.backup_analyzer.analyze_content(text, file_type)
-        except Exception as backup_error:
-            print(f"Backup AI service failed: {backup_error}")
-            
-            # Last resort - basic analysis
-            return {
-                "category": "Unclassified",
-                "keywords": ["document"],
-                "summary": "Error analyzing document content."
-            }
-```
+1. Verify your API key is correct and has not expired
+2. Check your internet connection
+3. Ensure your API account has sufficient credits
+4. Try switching to the alternative AI service
+5. Check the application logs for specific error messages

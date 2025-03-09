@@ -17,7 +17,7 @@ class OpenAIAnalyzer:
         
         # Initialize OpenAI client
         self.client = OpenAI(api_key=api_key)
-        self.model = "gpt-4o"  # Using the latest model
+        self.model = "gpt-4-turbo-preview"  # Using the latest model
         print(f"Using OpenAI model: {self.model}")
     
     def analyze_content(self, text, file_type):

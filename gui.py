@@ -9,6 +9,7 @@ import logging
 
 from file_analyzer import FileAnalyzer
 from file_organizer import FileOrganizer
+from settings_manager import SettingsManager
 from utils import get_readable_size, sanitize_filename
 
 logger = logging.getLogger("AIDocumentOrganizer")
@@ -22,14 +23,44 @@ class DocumentOrganizerApp:
             root: The tkinter root window
         """
         self.root = root
-        self.source_dir = tk.StringVar()
-        self.target_dir = tk.StringVar()
+        
+        # Initialize settings manager
+        self.settings_manager = SettingsManager()
+        
+        # Set up variables with values from settings
+        source_dir = self.settings_manager.get_setting("source_directory", "")
+        self.source_dir = tk.StringVar(value=source_dir if isinstance(source_dir, str) else "")
+        
+        target_dir = self.settings_manager.get_setting("target_directory", "")
+        self.target_dir = tk.StringVar(value=target_dir if isinstance(target_dir, str) else "")
+        
         # Aliases for save_directory method
         self.source_var = self.source_dir
         self.target_var = self.target_dir
         self.search_term = tk.StringVar()
-        self.batch_size = tk.IntVar(value=20)  # Default batch size
-        self.theme_var = tk.StringVar(value="System")  # Default theme
+        
+        batch_size = self.settings_manager.get_setting("batch_size", 20)
+        self.batch_size = tk.IntVar(value=batch_size if isinstance(batch_size, int) else 20)
+        
+        theme = self.settings_manager.get_setting("theme", "clam")
+        self.theme_var = tk.StringVar(value=theme if isinstance(theme, str) else "clam")
+        
+        # Organization rule variables
+        create_folders = self.settings_manager.get_setting("organization_rules.create_category_folders", True)
+        self.create_category_folders = tk.BooleanVar(
+            value=True if create_folders == {} else bool(create_folders))
+        
+        gen_summaries = self.settings_manager.get_setting("organization_rules.generate_summaries", True)
+        self.generate_summaries = tk.BooleanVar(
+            value=True if gen_summaries == {} else bool(gen_summaries))
+        
+        include_meta = self.settings_manager.get_setting("organization_rules.include_metadata", True)
+        self.include_metadata = tk.BooleanVar(
+            value=True if include_meta == {} else bool(include_meta))
+        
+        copy_instead = self.settings_manager.get_setting("organization_rules.copy_instead_of_move", True)
+        self.copy_instead_of_move = tk.BooleanVar(
+            value=True if copy_instead == {} else bool(copy_instead))
         
         self.analyzer = FileAnalyzer()
         self.organizer = FileOrganizer()
@@ -39,10 +70,6 @@ class DocumentOrganizerApp:
         self.scanned_files = []
         self.total_files = 0
         self.processed_files = 0
-        
-        # Set default directories (use raw strings for Windows paths)
-        self.source_dir.set(os.path.expanduser(r"~\Documents"))
-        self.target_dir.set(os.path.expanduser(r"~\Documents\Organized"))
         
         self._create_widgets()
         self._setup_layout()
@@ -496,6 +523,9 @@ class DocumentOrganizerApp:
         self.total_label.config(text="Copying: 0")
         self.batch_status_label.config(text="")
         
+        # Save organization rules to settings
+        self.save_organization_rules()
+        
         # Start organization thread
         organize_thread = threading.Thread(
             target=self.organize_files_thread, 
@@ -510,8 +540,13 @@ class DocumentOrganizerApp:
         try:
             # Apply the theme
             self.style.theme_use(theme)
-            messagebox.showinfo("Theme Changed", f"Theme changed to: {theme}")
-            logger.info(f"Changed theme to: {theme}")
+            
+            # Save theme to settings
+            if self.settings_manager.set_setting("theme", theme):
+                messagebox.showinfo("Theme Changed", f"Theme changed to: {theme}")
+                logger.info(f"Changed theme to: {theme}")
+            else:
+                messagebox.showwarning("Warning", "Theme applied but could not be saved as default")
         except Exception as e:
             logger.error(f"Error changing theme: {str(e)}")
             messagebox.showerror("Error", f"Could not apply theme: {str(e)}")
@@ -520,10 +555,13 @@ class DocumentOrganizerApp:
         """Save the current batch size as the default"""
         try:
             batch_size = self.batch_size.get()
-            # We would normally save this to a config file
-            # For now, we'll just show a message
-            messagebox.showinfo("Settings Saved", f"Default batch size set to: {batch_size}")
-            logger.info(f"Default batch size saved: {batch_size}")
+            
+            # Save to settings
+            if self.settings_manager.set_setting("batch_size", batch_size):
+                messagebox.showinfo("Settings Saved", f"Default batch size set to: {batch_size}")
+                logger.info(f"Default batch size saved: {batch_size}")
+            else:
+                messagebox.showwarning("Warning", "Could not save batch size setting")
         except Exception as e:
             logger.error(f"Error saving batch size: {str(e)}")
             messagebox.showerror("Error", f"Could not save settings: {str(e)}")
@@ -541,22 +579,46 @@ class DocumentOrganizerApp:
                     messagebox.showwarning("Warning", "Please select a source directory first")
                     return
                 setting_name = "Default source directory"
+                setting_key = "source_directory"
             elif dir_type == "target":
                 directory = self.target_var.get()
                 if not directory:
                     messagebox.showwarning("Warning", "Please select a target directory first")
                     return
                 setting_name = "Default target directory"
+                setting_key = "target_directory"
             else:
                 return
                 
-            # We would normally save this to a config file
-            # For now, we'll just show a message
-            messagebox.showinfo("Settings Saved", f"{setting_name} set to: {directory}")
-            logger.info(f"{setting_name} saved: {directory}")
+            # Save to settings
+            if self.settings_manager.set_setting(setting_key, directory):
+                messagebox.showinfo("Settings Saved", f"{setting_name} set to: {directory}")
+                logger.info(f"{setting_name} saved: {directory}")
+            else:
+                messagebox.showwarning("Warning", f"Could not save {setting_name}")
         except Exception as e:
             logger.error(f"Error saving directory setting: {str(e)}")
             messagebox.showerror("Error", f"Could not save directory setting: {str(e)}")
+            
+    def save_organization_rules(self):
+        """Save the organization rules to settings"""
+        try:
+            # Get values from UI
+            rules = {
+                "create_category_folders": self.create_category_folders.get(),
+                "generate_summaries": self.generate_summaries.get(),
+                "include_metadata": self.include_metadata.get(),
+                "copy_instead_of_move": self.copy_instead_of_move.get()
+            }
+            
+            # Save to settings
+            for key, value in rules.items():
+                self.settings_manager.set_setting(f"organization_rules.{key}", value)
+                
+            logger.info(f"Organization rules saved: {rules}")
+        except Exception as e:
+            logger.error(f"Error saving organization rules: {str(e)}")
+            messagebox.showerror("Error", f"Could not save organization rules: {str(e)}")
     
     def _create_settings_widgets(self):
         """Create widgets for the settings tab"""
@@ -570,7 +632,20 @@ class DocumentOrganizerApp:
         # Default batch size setting
         default_batch_combobox = ttk.Combobox(self.performance_frame, textvariable=self.batch_size, 
                                             values=["5", "10", "20", "50", "100"], width=5)
-        default_batch_combobox.current(2)  # Default to 20
+        # Set the current value based on settings
+        if self.batch_size.get() == 5:
+            default_batch_combobox.current(0)
+        elif self.batch_size.get() == 10:
+            default_batch_combobox.current(1)
+        elif self.batch_size.get() == 20:
+            default_batch_combobox.current(2)
+        elif self.batch_size.get() == 50:
+            default_batch_combobox.current(3)
+        elif self.batch_size.get() == 100:
+            default_batch_combobox.current(4)
+        else:
+            default_batch_combobox.current(2)  # Default to 20 if not in list
+            
         default_batch_combobox.grid(row=0, column=1, sticky='w', padx=5, pady=5)
         
         # Save settings button
@@ -580,7 +655,8 @@ class DocumentOrganizerApp:
         
         # Directory defaults
         self.dir_settings_frame = ttk.Frame(self.app_settings_frame)
-        ttk.Label(self.dir_settings_frame, text="Default Directories:").grid(row=0, column=0, sticky='w', padx=5, pady=5)
+        ttk.Label(self.dir_settings_frame, text="Default Directories:").grid(row=0, column=0, columnspan=2, 
+                                                                           sticky='w', padx=5, pady=5)
         
         # Default source dir setting
         ttk.Label(self.dir_settings_frame, text="Source:").grid(row=1, column=0, sticky='w', padx=5, pady=5)
@@ -608,6 +684,38 @@ class DocumentOrganizerApp:
                                       command=self.apply_theme)
         apply_theme_button.grid(row=0, column=2, sticky='w', padx=5, pady=5)
         
+        # Organization Rules Frame
+        self.org_rules_frame = ttk.LabelFrame(self.settings_tab, text="Organization Rules", padding=(10, 5))
+        
+        # Create checkboxes for organization rules
+        ttk.Checkbutton(self.org_rules_frame, text="Create category folders",
+                       variable=self.create_category_folders,
+                       command=self.save_organization_rules).grid(row=0, column=0, sticky='w', padx=5, pady=5)
+                       
+        ttk.Checkbutton(self.org_rules_frame, text="Generate content summaries",
+                       variable=self.generate_summaries,
+                       command=self.save_organization_rules).grid(row=1, column=0, sticky='w', padx=5, pady=5)
+                       
+        ttk.Checkbutton(self.org_rules_frame, text="Include metadata in separate files",
+                       variable=self.include_metadata,
+                       command=self.save_organization_rules).grid(row=2, column=0, sticky='w', padx=5, pady=5)
+                       
+        ttk.Checkbutton(self.org_rules_frame, text="Copy files instead of moving them",
+                       variable=self.copy_instead_of_move,
+                       command=self.save_organization_rules).grid(row=3, column=0, sticky='w', padx=5, pady=5)
+        
+        # Help section explaining the rules
+        rules_help_frame = ttk.Frame(self.org_rules_frame)
+        rules_help_text = ScrolledText(rules_help_frame, wrap=tk.WORD, width=40, height=5)
+        rules_help_text.insert(tk.END, "Organization Rules Help:\n\n")
+        rules_help_text.insert(tk.END, "- Create category folders: Create a folder structure based on AI-detected categories\n")
+        rules_help_text.insert(tk.END, "- Generate summaries: Create summary files with AI-generated content descriptions\n")
+        rules_help_text.insert(tk.END, "- Include metadata: Save detailed AI analysis alongside each file\n")
+        rules_help_text.insert(tk.END, "- Copy files: Keep original files intact (vs. moving them)\n")
+        rules_help_text.config(state=tk.DISABLED)
+        rules_help_frame.grid(row=0, column=1, rowspan=4, sticky='nsew', padx=5, pady=5)
+        rules_help_text.pack(fill='both', expand=True)
+        
         # About section
         self.about_frame = ttk.LabelFrame(self.settings_tab, text="About", padding=(10, 5))
         
@@ -630,8 +738,12 @@ class DocumentOrganizerApp:
         self.performance_frame.pack(fill='x', expand=False, padx=5, pady=5)
         self.dir_settings_frame.pack(fill='x', expand=False, padx=5, pady=5)
         self.ui_frame.pack(fill='x', expand=False, padx=5, pady=5)
+        self.org_rules_frame.pack(fill='x', expand=False, padx=10, pady=10)
         self.about_frame.pack(fill='both', expand=True, padx=10, pady=10)
         app_info.pack(fill='both', expand=True, padx=5, pady=5)
+        
+        # Configure grid weights for organization rules frame
+        self.org_rules_frame.columnconfigure(1, weight=1)
     
     def organize_files_thread(self, files, target_dir):
         """Thread function to organize files"""
@@ -648,8 +760,24 @@ class DocumentOrganizerApp:
                 # Update organization-specific labels
                 self.status_queue.put(("status", f"Organizing files ({percentage}%)"))
                 
-            # Pass the callback to the organizer
-            result = self.organizer.organize_files(files, target_dir, callback=organize_progress_callback)
+            # Get organization rules from the settings
+            organization_options = {
+                "create_category_folders": self.create_category_folders.get(),
+                "generate_summaries": self.generate_summaries.get(),
+                "include_metadata": self.include_metadata.get(),
+                "copy_instead_of_move": self.copy_instead_of_move.get()
+            }
+            
+            # Log the options being used
+            logger.info(f"Organizing with options: {organization_options}")
+            
+            # Pass the callback and options to the organizer
+            result = self.organizer.organize_files(
+                files, 
+                target_dir, 
+                callback=organize_progress_callback,
+                options=organization_options
+            )
             
             # Update with final results
             self.status_queue.put(("status", f"Organized {result['success']} files. {result['failed']} failed."))
@@ -666,7 +794,28 @@ class DocumentOrganizerApp:
                     "status": "Organization complete!",
                     "percentage": 100
                 }))
-                messagebox.showinfo("Success", f"Successfully organized {result['success']} files into {target_dir}")
+                
+                # Show summary of the organization
+                summary = f"Successfully organized {result['success']} files into {target_dir}\n\n"
+                
+                # Add details about the organization
+                if organization_options['create_category_folders']:
+                    summary += "Files were organized into category folders.\n"
+                else:
+                    summary += "Files were placed directly in the target directory.\n"
+                    
+                if organization_options['generate_summaries']:
+                    summary += "Content summaries were generated for each file.\n"
+                    
+                if organization_options['include_metadata']:
+                    summary += "AI analysis metadata was saved with each file.\n"
+                    
+                if organization_options['copy_instead_of_move']:
+                    summary += "Original files were preserved in their source location."
+                else:
+                    summary += "Files were moved from their source location."
+                
+                messagebox.showinfo("Organization Complete", summary)
         except Exception as e:
             logger.error(f"Error organizing files: {str(e)}")
             self.status_queue.put(("error", f"Error organizing files: {str(e)}"))

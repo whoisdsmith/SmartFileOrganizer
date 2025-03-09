@@ -1,0 +1,31 @@
+ SmartFileOrganizer  python main.py
+2025-03-09 19:48:45,149 - AIDocumentOrganizer - INFO - Starting AI Document Organizer application
+2025-03-09 19:48:45,150 - AIDocumentOrganizer - INFO - DPI awareness set successfully
+2025-03-09 19:48:45,216 - AIDocumentOrganizer - INFO - Set application icon from E:\Github\SmartFileOrganizer\generated-icon.png
+2025-03-09 19:48:45,217 - AIDocumentOrganizer - INFO - Available themes: ('winnative', 'clam', 'alt', 'default', 'classic', 'vista', 'xpnative')
+2025-03-09 19:48:45,217 - AIDocumentOrganizer - INFO - Using theme: winnative
+2025-03-09 19:48:45,218 - AIDocumentOrganizer - INFO - No settings file found, using defaults
+Warning: GOOGLE_API_KEY environment variable not set.
+Error getting Gemini models: 
+  No API_KEY or ADC found. Please either:
+    - Set the `GOOGLE_API_KEY` environment variable.
+    - Manually pass the key with `genai.configure(api_key=my_api_key)`.
+    - Or set up Application Default Credentials, see https://ai.google.dev/gemini-api/docs/oauth for more information.
+Falling back to models/gemini-1.5-pro model
+Warning: GOOGLE_API_KEY environment variable not set.
+Error getting Gemini models: 
+  No API_KEY or ADC found. Please either:
+    - Set the `GOOGLE_API_KEY` environment variable.
+    - Manually pass the key with `genai.configure(api_key=my_api_key)`.
+    - Or set up Application Default Credentials, see https://ai.google.dev/gemini-api/docs/oauth for more information.
+Falling back to models/gemini-1.5-pro model
+Warning: GOOGLE_API_KEY environment variable not set.
+Error getting Gemini models: 
+  No API_KEY or ADC found. Please either:
+    - Set the `GOOGLE_API_KEY` environment variable.
+    - Manually pass the key with `genai.configure(api_key=my_api_key)`.
+    - Or set up Application Default Credentials, see https://ai.google.dev/gemini-api/docs/oauth for more information.
+Falling back to models/gemini-1.5-pro model
+2025-03-09 19:48:54,090 - AIDocumentOrganizer - INFO - GUI initialized
+2025-03-09 19:48:54,090 - AIDocumentOrganizer - INFO - Entering main application loop
+2025-03-09 19:49:07,832 - AIDocumentOrganizer - INFO - Application closed

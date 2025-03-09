@@ -159,11 +159,25 @@ class FileOrganizer:
                 f.write(f"Size: {file_info.get('size', 0)} bytes\n")
                 f.write(f"Category: {file_info.get('category', '')}\n")
                 
+                if 'theme' in file_info:
+                    f.write(f"Theme: {file_info.get('theme', '')}\n")
+                
                 if 'keywords' in file_info:
                     f.write(f"Keywords: {', '.join(file_info['keywords'])}\n")
                 
                 if 'summary' in file_info:
                     f.write(f"\nSummary:\n{file_info['summary']}\n")
+                
+                # Include relationship information if available
+                if 'related_documents' in file_info and file_info['related_documents']:
+                    f.write("\nRelated Documents:\n")
+                    for doc in file_info['related_documents'][:3]:  # Limit to top 3
+                        rel_strength = doc.get('relationship_strength', 'medium')
+                        rel_explanation = doc.get('relationship_explanation', '')
+                        f.write(f"- {doc.get('filename', '')}: {rel_strength.capitalize()} relationship")
+                        if rel_explanation:
+                            f.write(f" - {rel_explanation}")
+                        f.write("\n")
                 
                 if 'metadata' in file_info:
                     f.write("\nMetadata:\n")
@@ -323,10 +337,70 @@ class FileOrganizer:
                         
                         f.write("---\n\n")
                 
+                # Document relationships section (if we have enough documents)
+                if len(file_data) > 1:
+                    f.write("\n## Document Relationships\n\n")
+                    f.write("This section shows the relationships between documents based on content analysis.\n\n")
+                    
+                    # Process document relationships for important documents
+                    max_relationships = min(5, len(file_data))
+                    relationships_analyzed = 0
+                    
+                    # Find primary documents to analyze (prioritize by category importance)
+                    primary_docs = []
+                    for category in category_stats:
+                        # Get documents from this category
+                        category_docs = [doc for doc in file_data if doc.get("category", "") == category]
+                        if category_docs:
+                            # Add the first document from each category to analyze
+                            primary_docs.append(category_docs[0])
+                            if len(primary_docs) >= max_relationships:
+                                break
+                    
+                    # If we still don't have enough, add any remaining docs
+                    if len(primary_docs) < max_relationships:
+                        for doc in file_data:
+                            if doc not in primary_docs:
+                                primary_docs.append(doc)
+                                if len(primary_docs) >= max_relationships:
+                                    break
+                    
+                    # Process each primary document to find relationships
+                    for primary_doc in primary_docs:
+                        # Convert keywords string to list if needed
+                        if "keywords" in primary_doc and isinstance(primary_doc["keywords"], str):
+                            primary_doc["keywords"] = [k.strip() for k in primary_doc["keywords"].split(",")]
+                            
+                        # Find similar documents for this primary document
+                        try:
+                            similar_docs = self.ai_analyzer.find_similar_documents(
+                                primary_doc, file_data, max_results=3)
+                            
+                            if similar_docs:
+                                f.write(f"### Related to: {primary_doc['filename']}\n\n")
+                                if "category" in primary_doc:
+                                    f.write(f"Category: {primary_doc.get('category', 'Unknown')}\n\n")
+                                
+                                # List related documents
+                                for i, doc in enumerate(similar_docs):
+                                    score = doc.get("similarity_score", 0)
+                                    similarity = "High" if score >= 5 else "Medium" if score >= 3 else "Low"
+                                    f.write(f"{i+1}. **{doc.get('filename', '')}** - {similarity} similarity\n")
+                                    if "relationship_explanation" in doc:
+                                        f.write(f"   - {doc.get('relationship_explanation', '')}\n")
+                                f.write("\n")
+                                
+                                relationships_analyzed += 1
+                        except Exception as e:
+                            self.logger.error(f"Error analyzing relationships for {primary_doc.get('filename', '')}: {str(e)}")
+                    
+                    if relationships_analyzed == 0:
+                        f.write("No significant relationships found between documents.\n\n")
+                
                 # Footer
                 f.write("\n## About this Report\n\n")
                 f.write("This report was automatically generated by AI Document Organizer using Google Gemini Flash 2.0 AI analysis.\n")
-                f.write("The content categorization and summaries are AI-generated and may require human verification for critical information.\n")
+                f.write("The content categorization, relationships, and summaries are AI-generated and may require human verification for critical information.\n")
             
             self.logger.info(f"Generated folder report: {report_path}")
             return report_path

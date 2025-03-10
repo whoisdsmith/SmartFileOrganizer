@@ -124,3 +124,5 @@ logs/
 test_output/
 *.bak
 *.tmp
+
+packaging/

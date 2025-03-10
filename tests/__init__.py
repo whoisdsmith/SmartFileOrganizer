@@ -1,1 +1,0 @@
-"""AI Document Organizer tests."""

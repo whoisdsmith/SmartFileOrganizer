@@ -15,7 +15,21 @@ This document explains how to package the AI Document Organizer application into
 
 ## Building the Executable
 
-### Method 1: Using the build script (Recommended)
+### Method 1: Using the batch file (Recommended)
+
+1. Navigate to the packaging directory:
+   ```
+   cd packaging
+   ```
+
+2. Run the batch file:
+   ```
+   build.bat
+   ```
+
+3. The executable will be created in the `../dist/AI Document Organizer` directory.
+
+### Method 2: Using the Python build script
 
 1. Navigate to the packaging directory:
    ```
@@ -29,7 +43,7 @@ This document explains how to package the AI Document Organizer application into
 
 3. The executable will be created in the `../dist/AI Document Organizer` directory.
 
-### Method 2: Manual PyInstaller command
+### Method 3: Manual PyInstaller command
 
 1. Navigate to the project root directory:
    ```
@@ -38,7 +52,7 @@ This document explains how to package the AI Document Organizer application into
 
 2. Run PyInstaller with the appropriate options:
    ```
-   pyinstaller --clean --onedir --windowed --name "AI Document Organizer" --icon assets/generated-icon.png --add-data "assets/generated-icon.png;." --add-data "docs;docs" main.py
+   pyinstaller --clean --onedir --windowed --name "AI Document Organizer" --icon assets/generated-icon.png --version-file packaging/version_info.txt --add-data "assets/generated-icon.png;." --add-data "docs;docs" main.py
    ```
 
 3. The executable will be created in the `dist/AI Document Organizer` directory.
@@ -79,6 +93,7 @@ AI-Document-Organizer/
 │   ├── version_info.txt      # Version information
 │   ├── installer.nsi         # NSIS installer script
 │   ├── build_exe.py          # Build script
+│   ├── build.bat             # Batch file for building
 │   └── setup_cx_freeze.py    # cx_Freeze setup script
 ├── assets/                   # Application assets
 │   └── generated-icon.png    # Application icon
@@ -94,7 +109,7 @@ AI-Document-Organizer/
 
 If the executable fails to run due to missing DLLs or modules:
 
-1. Edit the `build_exe.py` file
+1. Edit the `build.bat` file or `build_exe.py` file
 2. Add the missing modules to the `--hidden-import` options
 3. Rebuild the executable
 
@@ -115,11 +130,9 @@ If you encounter errors during NSIS compilation:
 
 ### Version Information
 
-The application version information is stored in `version_info.txt`. To include it in the executable:
+The application version information is stored in `version_info.txt`. To update the version:
 
-1. Edit the `build_exe.py` file
-2. Add the `--version-file` option to the PyInstaller command:
-   ```
-   "--version-file", os.path.join("packaging", "version_info.txt"),
-   ```
-3. Rebuild the executable
+1. Edit the `version_info.txt` file
+2. Update the version numbers in both `filevers` and `prodvers` tuples
+3. Update the `FileVersion` and `ProductVersion` string values
+4. Rebuild the executable

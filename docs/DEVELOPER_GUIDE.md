@@ -82,10 +82,10 @@ class FileAnalyzer:
     def __init__(self):
         self.parser = FileParser()
         self.ai_analyzer = AIAnalyzer()
-        
+
     def scan_directory(self, directory_path):
         # Scans directory and returns list of analyzed files
-        
+
     def _get_file_info(self, file_path, file_ext):
         # Extracts basic file information
 ```
@@ -96,13 +96,13 @@ class FileAnalyzer:
 class FileParser:
     def extract_text(self, file_path, file_ext):
         # Extracts text content from various file types
-        
+
     def extract_metadata(self, file_path, file_ext):
         # Extracts metadata from files
-        
+
     def _parse_csv(self, file_path):
         # CSV-specific parsing logic
-    
+
     # Additional parsing methods for other file types
 ```
 
@@ -112,17 +112,17 @@ class FileParser:
 class AIAnalyzer:
     def __init__(self):
         # Initialize Google Gemini API connection
-        
+
     def analyze_content(self, text, file_type):
         # Analyze document content using AI
-        
+
     def _get_content_analysis(self, text, file_type):
         # Constructs prompt and processes API response
-        
+
     def find_similar_documents(self, target_doc, document_list, max_results=5):
         # Find documents similar to the target document
         # Returns list of similar document dictionaries with similarity scores
-        
+
     def find_related_content(self, target_doc, document_list, max_results=5):
         # Find documents related to the target document using AI comparison
         # Returns dictionary with relationship information and related documents
@@ -141,10 +141,10 @@ class FileOrganizer:
         # - generate_summaries: Whether to generate content summary files (default: True)
         # - include_metadata: Whether to create metadata files (default: True)
         # - copy_instead_of_move: Whether to copy files instead of moving them (default: True)
-        
+
     def _create_metadata_file(self, file_info, target_path):
         # Creates metadata file with AI analysis
-        
+
     def _create_summary_file(self, file_info, target_path):
         # Creates separate summary file with content summary and timestamps
 ```
@@ -171,7 +171,7 @@ def _parse_pdf(self, file_path):
     try:
         # Use appropriate PDF library
         import PyPDF2
-        
+
         with open(file_path, 'rb') as file:
             reader = PyPDF2.PdfReader(file)
             text = ""
@@ -196,10 +196,10 @@ def _get_content_analysis(self, text, file_type):
     3. A brief summary of the document content (max 2-3 sentences)
     4. The intended audience for this document
     5. A difficulty rating from 1-5 (1=simple, 5=complex)
-    
+
     Content:
     {text}
-    
+
     Return your analysis in JSON format with the following structure:
     {{
         "category": "Category name",
@@ -208,10 +208,10 @@ def _get_content_analysis(self, text, file_type):
         "audience": "Intended audience",
         "difficulty": 3
     }}
-    
+
     Make sure to return ONLY valid JSON without any additional text or explanation.
     """
-    
+
     # Update the rest of the method to handle the new fields
 ```
 
@@ -236,27 +236,27 @@ class OpenAIAnalyzer:
         api_key = os.environ.get("OPENAI_API_KEY", "")
         self.client = OpenAI(api_key=api_key)
         self.model = "gpt-4o"  # the newest OpenAI model
-    
+
     def analyze_content(self, text, file_type):
         # Similar to AIAnalyzer.analyze_content()
-        
+
     def _get_content_analysis(self, text, file_type):
         prompt = f"""
         Please analyze the following {file_type} document content and provide:
         1. A category for document organization (choose the most specific appropriate category)
         2. 3-5 keywords that represent the main topics in the document
         3. A brief summary of the document content (max 2-3 sentences)
-        
+
         Content:
         {text}
         """
-        
+
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"}
         )
-        
+
         result = json.loads(response.choices[0].message.content)
         return result
 ```
@@ -278,56 +278,56 @@ def _create_settings_widgets(self):
     """Create widgets for the settings tab"""
     # App settings frame
     self.app_settings_frame = ttk.LabelFrame(self.settings_tab, text="Application Settings", padding=(10, 5))
-    
+
     # Performance settings
     self.performance_frame = ttk.Frame(self.app_settings_frame)
     ttk.Label(self.performance_frame, text="Default Batch Size:").grid(row=0, column=0, sticky='w', padx=5, pady=5)
-    
+
     # Default batch size setting
-    default_batch_combobox = ttk.Combobox(self.performance_frame, textvariable=self.batch_size, 
+    default_batch_combobox = ttk.Combobox(self.performance_frame, textvariable=self.batch_size,
                                         values=["5", "10", "20", "50", "100"], width=5)
     default_batch_combobox.current(2)  # Default to 20
     default_batch_combobox.grid(row=0, column=1, sticky='w', padx=5, pady=5)
-    
+
     # Save settings button
-    save_settings_button = ttk.Button(self.performance_frame, text="Save as Default", 
+    save_settings_button = ttk.Button(self.performance_frame, text="Save as Default",
                                     command=self.save_batch_size)
     save_settings_button.grid(row=0, column=2, sticky='w', padx=5, pady=5)
-    
+
     # UI settings
     self.ui_frame = ttk.Frame(self.app_settings_frame)
     ttk.Label(self.ui_frame, text="Interface Theme:").grid(row=0, column=0, sticky='w', padx=5, pady=5)
-    
+
     # Theme selector
     theme_names = list(self.style.theme_names())
     theme_combobox = ttk.Combobox(self.ui_frame, textvariable=self.theme_var, values=theme_names, width=10)
     theme_combobox.grid(row=0, column=1, sticky='w', padx=5, pady=5)
-    
+
     # Apply theme button
-    apply_theme_button = ttk.Button(self.ui_frame, text="Apply Theme", 
+    apply_theme_button = ttk.Button(self.ui_frame, text="Apply Theme",
                                   command=self.apply_theme)
     apply_theme_button.grid(row=0, column=2, sticky='w', padx=5, pady=5)
-    
+
     # Organization Rules Frame
     self.org_rules_frame = ttk.LabelFrame(self.settings_tab, text="Organization Rules", padding=(10, 5))
-    
+
     # Create checkboxes for organization rules
     ttk.Checkbutton(self.org_rules_frame, text="Create category folders",
                    variable=self.create_category_folders,
                    command=self.save_organization_rules).grid(row=0, column=0, sticky='w', padx=5, pady=5)
-                   
+
     ttk.Checkbutton(self.org_rules_frame, text="Generate content summaries",
                    variable=self.generate_summaries,
                    command=self.save_organization_rules).grid(row=1, column=0, sticky='w', padx=5, pady=5)
-                   
+
     ttk.Checkbutton(self.org_rules_frame, text="Include metadata in separate files",
                    variable=self.include_metadata,
                    command=self.save_organization_rules).grid(row=2, column=0, sticky='w', padx=5, pady=5)
-                   
+
     ttk.Checkbutton(self.org_rules_frame, text="Copy files instead of moving them",
                    variable=self.copy_instead_of_move,
                    command=self.save_organization_rules).grid(row=3, column=0, sticky='w', padx=5, pady=5)
-    
+
     # Help text explaining the rules
     rules_help_frame = ttk.Frame(self.org_rules_frame)
     rules_help_text = ScrolledText(rules_help_frame, wrap=tk.WORD, width=40, height=5)
@@ -366,7 +366,7 @@ def save_batch_size(self):
     except Exception as e:
         logger.error(f"Error saving batch size: {str(e)}")
         messagebox.showerror("Error", f"Could not save settings: {str(e)}")
-        
+
 def save_organization_rules(self):
     """Save the organization rules to settings"""
     try:
@@ -377,11 +377,11 @@ def save_organization_rules(self):
             "include_metadata": self.include_metadata.get(),
             "copy_instead_of_move": self.copy_instead_of_move.get()
         }
-        
+
         # Save to settings
         for key, value in rules.items():
             self.settings_manager.set_setting(f"organization_rules.{key}", value)
-            
+
         logger.info(f"Organization rules saved: {rules}")
     except Exception as e:
         logger.error(f"Error saving organization rules: {str(e)}")
@@ -401,22 +401,22 @@ Example - Adding an "Export Analysis" button:
 ```python
 def _create_widgets(self):
     # Existing code...
-    
+
     # Add export button
     self.export_button = ttk.Button(
-        self.button_frame, 
-        text="Export Analysis", 
+        self.button_frame,
+        text="Export Analysis",
         command=self.export_analysis
     )
-    
+
     # ...
 
 def _setup_layout(self):
     # Existing code...
-    
+
     # Add export button to layout
     self.export_button.grid(row=0, column=3, padx=5, pady=5, sticky="ew")
-    
+
     # ...
 
 def export_analysis(self):
@@ -424,20 +424,20 @@ def export_analysis(self):
     if not self.analyzed_files:
         messagebox.showinfo("Export", "No files have been analyzed yet.")
         return
-        
+
     file_path = filedialog.asksaveasfilename(
         defaultextension=".csv",
         filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
     )
-    
+
     if not file_path:
         return
-        
+
     try:
         with open(file_path, 'w', newline='') as csvfile:
             writer = csv.writer(csvfile)
             writer.writerow(["Filename", "Category", "Keywords", "Summary"])
-            
+
             for file in self.analyzed_files:
                 writer.writerow([
                     file["filename"],
@@ -445,7 +445,7 @@ def export_analysis(self):
                     ", ".join(file.get("keywords", [])),
                     file.get("summary", "")
                 ])
-                
+
         messagebox.showinfo("Export", f"Analysis exported to {file_path}")
     except Exception as e:
         messagebox.showerror("Export Error", f"Error exporting analysis: {str(e)}")
@@ -463,14 +463,14 @@ For large sets of documents, consider these optimizations:
 def scan_directory(self, directory_path, batch_size=50):
     all_files = []
     file_paths = [os.path.join(directory_path, f) for f in os.listdir(directory_path)]
-    
+
     # Process in batches
     for i in range(0, len(file_paths), batch_size):
         batch = file_paths[i:i+batch_size]
         # Process this batch
         batch_results = self._process_batch(batch)
         all_files.extend(batch_results)
-        
+
     return all_files
 ```
 
@@ -522,16 +522,16 @@ To add new tests, follow this pattern:
 def test_new_feature():
     """Test description"""
     print("Testing new feature")
-    
+
     # Setup
     # ...
-    
+
     # Test steps
     # ...
-    
+
     # Verification
     assert result == expected, f"Expected {expected}, got {result}"
-    
+
     print("Test completed successfully!")
 
 if __name__ == "__main__":

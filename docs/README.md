@@ -49,9 +49,11 @@ The AI Document Organizer helps you automatically organize your documents by ana
 
 1. Clone or download this repository
 2. Install required dependencies:
+
    ```
    pip install beautifulsoup4 chardet python-docx google-generativeai numpy openai openpyxl pandas
    ```
+
 3. Set up your Google API key as an environment variable:
    - Open Command Prompt as Administrator
    - Run: `setx GOOGLE_API_KEY AIzaSyAndYCK_XqP78lnjvVs4o8bFLso_Ar0J_Q` (replace with your actual API key)
@@ -60,9 +62,11 @@ The AI Document Organizer helps you automatically organize your documents by ana
 ## Quick Start
 
 1. Run the application:
+
    ```
    python main.py
    ```
+
 2. Using the interface:
    - Click "Browse" to select a source directory containing documents
    - Click "Browse" to select a target directory for organized documents
@@ -159,6 +163,7 @@ python test_document_organizer.py
 ```
 
 This will:
+
 1. Process sample files from the test_files directory
 2. Generate AI analysis for each file
 3. Organize them into the test_output directory
@@ -200,7 +205,7 @@ These tests will analyze sample documents and identify different types of relati
 The application consists of several key components:
 
 - **GUI Module**: Creates and manages the application interface
-- **File Parser**: Extracts text content from various file formats 
+- **File Parser**: Extracts text content from various file formats
 - **AI Analyzer**: Processes document content using Google Gemini 2.0 Flash API
   - Content analysis and categorization
   - Document relationship detection with advanced contextual analysis
@@ -213,6 +218,7 @@ The application consists of several key components:
   - Produces relationship visualizations in reports
 
 Each document is analyzed to determine:
+
 - The most appropriate category for organization
 - Keywords representing document topics
 - A concise summary of document content

@@ -1,4 +1,3 @@
-
 # AI Document Organizer - Quick Start Guide
 
 This guide will help you quickly set up and start using the AI Document Organizer application.
@@ -6,11 +5,13 @@ This guide will help you quickly set up and start using the AI Document Organize
 ## Installation
 
 1. Clone the repository:
+
    ```bash
    git clone https://github.com/yourusername/ai-document-organizer.git
    ```
 
 2. Install dependencies:
+
    ```bash
    pip install -r requirements.txt
    ```
@@ -20,10 +21,11 @@ This guide will help you quickly set up and start using the AI Document Organize
    - Enable the Gemini API
    - Create an API key
    - Add the key to your environment variables:
+
      ```bash
      # On Windows
      set GOOGLE_API_KEY=your_api_key_here
-     
+
      # On macOS/Linux
      export GOOGLE_API_KEY=your_api_key_here
      ```
@@ -31,6 +33,7 @@ This guide will help you quickly set up and start using the AI Document Organize
 ## Running the Application
 
 Launch the application by running:
+
 ```bash
 python main.py
 ```
@@ -60,6 +63,7 @@ The graphical user interface will appear.
 ## Settings Customization
 
 Access the Settings tab to customize:
+
 - Default batch size for analysis
 - Application theme
 - Organization rules (create folders, generate summaries, etc.)

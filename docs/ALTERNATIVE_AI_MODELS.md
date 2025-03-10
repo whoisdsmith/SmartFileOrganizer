@@ -123,19 +123,23 @@ If the selected AI service is not available (e.g., missing API key), the applica
 #### Setting up OpenAI API Key
 
 ##### Windows
+
 ```
 setx OPENAI_API_KEY "your-openai-api-key-here"
 ```
 
 ##### macOS/Linux
+
 ```
 export OPENAI_API_KEY="your-openai-api-key-here"
 ```
+
 Add to your `~/.bashrc` or `~/.zshrc` file for persistence.
 
 ##### Verifying the API Key
 
 Run the test script to verify your OpenAI API key is working correctly:
+
 ```
 python test_api_keys.py
 ```

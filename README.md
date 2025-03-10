@@ -1,3 +1,5 @@
+![AI Document Organizer Banner](assets/banner.svg)
+
 # AI Document Organizer
 
 An intelligent document organization application powered by AI, supporting both Google Gemini and OpenAI models.

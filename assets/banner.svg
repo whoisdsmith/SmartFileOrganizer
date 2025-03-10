@@ -1,0 +1,23 @@
+<svg width="1200" height="300" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="networkGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#16222A;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#3A6073;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="300" fill="url(#networkGradient)" />
+  <!-- AI Network Nodes -->
+  <circle cx="300" cy="120" r="8" fill="#00c6ff" />
+  <circle cx="500" cy="80" r="8" fill="#00c6ff" />
+  <circle cx="700" cy="140" r="8" fill="#00c6ff" />
+  <circle cx="900" cy="100" r="8" fill="#00c6ff" />
+  <line x1="300" y1="120" x2="500" y2="80" stroke="#00c6ff" stroke-width="2"/>
+  <line x1="500" y1="80" x2="700" y2="140" stroke="#00c6ff" stroke-width="2"/>
+  <line x1="700" y1="140" x2="900" y2="100" stroke="#00c6ff" stroke-width="2"/>
+  <text x="50%" y="50%" text-anchor="middle" fill="#ffffff" font-size="55" font-family="Arial, sans-serif" font-weight="bold">
+    AI Document Organizer
+  </text>
+  <text x="50%" y="70%" text-anchor="middle" fill="#ffffff" font-size="28" font-family="Arial, sans-serif">
+    AI-Driven Smart Document Management
+  </text>
+</svg>

@@ -5,7 +5,15 @@ import shutil
 
 
 def build_executable():
-    """Build the executable using PyInstaller"""
+    """
+    Build the executable using PyInstaller with the spec file.
+
+    This function:
+    1. Determines the project root and packaging directories
+    2. Cleans up previous build artifacts
+    3. Runs PyInstaller with the spec file
+    4. Verifies the build was successful
+    """
     print("Building AI Document Organizer executable...")
 
     # Get the project root directory
@@ -24,12 +32,12 @@ def build_executable():
         print("Removing previous dist directory...")
         shutil.rmtree("dist")
 
-    # Build the executable
+    # Build the executable using just the spec file
+    # Note: The version info is already included in the spec file
     print("Running PyInstaller...")
     result = subprocess.run([
         "pyinstaller",
         "--clean",
-        "--version-file=version_info.txt",
         "ai_document_organizer.spec"
     ], capture_output=True, text=True)
 
@@ -39,10 +47,16 @@ def build_executable():
         print(result.stderr)
         return False
 
-    print("Build completed successfully!")
-    print(
-        f"Executable is located in: {os.path.abspath('../dist/AI Document Organizer')}")
-    return True
+    # Verify the executable was created
+    exe_path = os.path.abspath('../dist/AI Document Organizer')
+    if os.path.exists(exe_path):
+        print("Build completed successfully!")
+        print(f"Executable is located in: {exe_path}")
+        return True
+    else:
+        print("Build process completed but executable not found.")
+        print("Check the PyInstaller output for details.")
+        return False
 
 
 if __name__ == "__main__":

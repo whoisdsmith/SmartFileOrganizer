@@ -15,7 +15,7 @@ This document explains how to package the AI Document Organizer application into
 
 ## Building the Executable
 
-### Method 1: Using the build script
+### Method 1: Using the build script (Recommended)
 
 1. Navigate to the packaging directory:
    ```
@@ -27,7 +27,7 @@ This document explains how to package the AI Document Organizer application into
    python build_exe.py
    ```
 
-3. The executable will be created in the `dist/AI Document Organizer` directory.
+3. The executable will be created in the `../dist/AI Document Organizer` directory.
 
 ### Method 2: Manual PyInstaller command
 
@@ -38,10 +38,10 @@ This document explains how to package the AI Document Organizer application into
 
 2. Run PyInstaller with the spec file:
    ```
-   pyinstaller --clean --version-file=version_info.txt ai_document_organizer.spec
+   pyinstaller --clean ai_document_organizer.spec
    ```
 
-3. The executable will be created in the `dist/AI Document Organizer` directory.
+3. The executable will be created in the `../dist/AI Document Organizer` directory.
 
 ## Creating the Installer
 
@@ -84,6 +84,7 @@ AI-Document-Organizer/
 │   └── generated-icon.png    # Application icon
 ├── docs/                     # Documentation
 │   └── LICENSE.txt           # License file for installer
+├── src/                      # Source code
 └── main.py                   # Main entry point
 ```
 
@@ -111,3 +112,12 @@ If you encounter errors during NSIS compilation:
 1. Make sure all paths in the `installer.nsi` file are correct
 2. Check that the `dist/AI Document Organizer` directory exists and contains the built application
 3. Verify that you have the required NSIS plugins installed
+
+### Version Information
+
+The application version information is stored in `version_info.txt` and is automatically included in the executable when building with the spec file. If you need to update the version:
+
+1. Edit the `version_info.txt` file
+2. Update the version numbers in both `filevers` and `prodvers` tuples
+3. Update the `FileVersion` and `ProductVersion` string values
+4. Rebuild the executable

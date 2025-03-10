@@ -22,6 +22,8 @@ Detailed documentation can be found in the [docs](./docs) directory:
 - Content summarization and keyword extraction
 - Windows-optimized user interface
 - Batch processing for large document sets
+- Smart rate limiting to prevent API quota errors
+- Configurable batch size and delay settings
 
 ## Installation
 
@@ -38,3 +40,23 @@ pip install -r requirements.txt
 ```bash
 python main.py
 ```
+
+## API Rate Limiting
+
+When processing large numbers of documents, the application may encounter API rate limits from Google Gemini. The application includes the following features to handle this:
+
+- **Configurable Batch Size**: Reduce the number of files processed in each batch (default: 10)
+- **Batch Delay**: Add a delay between processing batches (default: 5 seconds)
+- **Exponential Backoff**: Automatically retry failed API calls with increasing delays
+- **Error Handling**: Gracefully handle rate limit errors and continue processing
+
+These settings can be adjusted in the application's Settings tab.
+
+## API Keys
+
+To use the AI features, you need to set up your API keys:
+
+1. Get a Google Gemini API key from [Google AI Studio](https://ai.google.dev/)
+2. Set the environment variable `GOOGLE_API_KEY` with your API key
+
+Alternatively, you can use OpenAI by setting the `OPENAI_API_KEY` environment variable.

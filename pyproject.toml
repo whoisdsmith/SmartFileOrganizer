@@ -1,16 +1,74 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "repl-nix-workspace"
-version = "0.1.0"
-description = "Add your description here"
-requires-python = ">=3.11"
-dependencies = [
-    "beautifulsoup4>=4.13.3",
-    "chardet>=5.2.0",
-    "docx>=0.2.4",
-    "google-generativeai>=0.8.4",
-    "numpy>=2.2.3",
-    "openai>=1.65.5",
-    "openpyxl>=3.1.5",
-    "pandas>=2.2.3",
-    "python-docx>=1.1.2",
+name = "ai-document-organizer"
+version = "1.0.0"
+description = "An intelligent document organization application powered by AI"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "Your Name", email = "your.email@example.com"}
 ]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Win32 (MS Windows)",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Office/Business",
+    "Topic :: Text Processing :: General",
+]
+dependencies = [
+    "google-generativeai>=0.3.1",
+    "openai>=1.3.0",
+    "pandas>=1.5.3",
+    "openpyxl>=3.1.2",
+    "python-docx>=0.8.11",
+    "beautifulsoup4>=4.12.2",
+    "markdown>=3.4.3",
+    "pillow>=9.5.0",
+    "tqdm>=4.66.1",
+    "python-dotenv>=1.0.0",
+    "requests>=2.31.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "flake8>=6.0.0",
+]
+packaging = [
+    "pyinstaller>=5.13.0",
+    "cx_freeze>=6.15.0",
+]
+windows = [
+    "pywin32>=306",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/yourusername/ai-document-organizer"
+"Bug Tracker" = "https://github.com/yourusername/ai-document-organizer/issues"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.black]
+line-length = 100
+target-version = ["py38"]
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"

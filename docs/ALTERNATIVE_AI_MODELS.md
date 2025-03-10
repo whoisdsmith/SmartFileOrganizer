@@ -49,17 +49,14 @@ If you're extending the application, you can use the AIServiceFactory:
 from src.ai_service_factory import AIServiceFactory
 from src.settings_manager import SettingsManager
 
-# Create a settings manager
+# Initialize settings
 settings_manager = SettingsManager()
 
-# Create a Google Gemini analyzer
-google_analyzer = AIServiceFactory.create_analyzer('google', settings_manager)
+# Create an AI service using the factory
+ai_service = AIServiceFactory.create_ai_service(settings_manager)
 
-# Create an OpenAI analyzer
-openai_analyzer = AIServiceFactory.create_analyzer('openai', settings_manager)
-
-# Let the factory choose based on settings and environment variables
-default_analyzer = AIServiceFactory.create_analyzer(None, settings_manager)
+# Use the service
+analysis_result = ai_service.analyze_document("Sample text to analyze")
 ```
 
 ## Available Models

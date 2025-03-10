@@ -1,3 +1,1 @@
-"""
-Tests for the AI Document Organizer application.
-"""
+"""AI Document Organizer tests."""

@@ -19,6 +19,42 @@ The application follows a modular design with clear separation of concerns:
 └───────────────┘        └────────────────┘        └────────────────┘
 ```
 
+## Project Structure
+
+The project follows a clean, organized structure:
+
+```
+AI-Document-Organizer/
+├── src/                      # All source code
+│   ├── ai_analyzer.py        # Google Gemini AI integration
+│   ├── openai_analyzer.py    # OpenAI integration
+│   ├── ai_service_factory.py # Factory for creating AI services
+│   ├── file_analyzer.py      # Document scanning and analysis
+│   ├── file_organizer.py     # Document organization
+│   ├── file_parser.py        # Content extraction from files
+│   ├── gui.py                # User interface
+│   ├── settings_manager.py   # Application settings
+│   └── utils.py              # Helper utilities
+├── docs/                     # Documentation
+│   ├── README.md             # User guide
+│   ├── QUICK_START_GUIDE.md  # Quick start guide
+│   ├── DEVELOPER_GUIDE.md    # Developer documentation (this file)
+│   └── ALTERNATIVE_AI_MODELS.md # AI model information
+├── assets/                   # Application assets
+│   └── generated-icon.png    # Application icon
+├── packaging/                # Packaging-related files
+│   ├── ai_document_organizer.spec # PyInstaller specification
+│   ├── installer.nsi         # NSIS installer script
+│   └── build_exe.py          # Build script
+├── tests/                    # Test files
+│   ├── test_ai_services.py   # Tests for AI services
+│   ├── test_document_organizer.py # Integration tests
+│   └── test_files/           # Sample files for testing
+├── main.py                   # Main entry point
+├── requirements.txt          # Dependencies
+└── pyproject.toml            # Project metadata
+```
+
 ## Code Structure
 
 ### Main Components
@@ -28,7 +64,7 @@ The application follows a modular design with clear separation of concerns:
    - Configures application environment (DPI awareness, icons, theme)
    - Initializes and launches the GUI
 
-2. **gui.py**: User interface components
+2. **src/gui.py**: User interface components
    - Implements `DocumentOrganizerApp` class for the main window
    - Handles user input, file browsing, and results display
    - Manages threading for non-blocking operations
@@ -36,47 +72,47 @@ The application follows a modular design with clear separation of concerns:
    - Provides theme management and user preferences
    - Includes AI model selection and API key management
 
-3. **file_analyzer.py**: Document scanning and analysis
+3. **src/file_analyzer.py**: Document scanning and analysis
    - Scans directories for supported file types
    - Collects file information
    - Coordinates between parser and AI analyzer
    - Implements batch processing with configurable size and delay
 
-4. **file_parser.py**: Content extraction from various file formats
+4. **src/file_parser.py**: Content extraction from various file formats
    - Implements parsing logic for each supported file type
    - Extracts text and metadata
    - Handles encoding detection and character set issues
 
-5. **ai_analyzer.py**: AI processing using Google Gemini
+5. **src/ai_analyzer.py**: AI processing using Google Gemini
    - Connects to Google Gemini API
    - Constructs appropriate prompts for analysis
    - Implements rate limiting and exponential backoff
    - Provides model selection capabilities
    - Handles API errors gracefully
 
-6. **openai_analyzer.py**: AI processing using OpenAI
+6. **src/openai_analyzer.py**: AI processing using OpenAI
    - Connects to OpenAI API
    - Constructs appropriate prompts for analysis
    - Provides model selection capabilities
    - Handles API errors gracefully
 
-7. **ai_service_factory.py**: Factory for creating AI analyzers
+7. **src/ai_service_factory.py**: Factory for creating AI analyzers
    - Creates the appropriate AI analyzer based on settings
    - Handles fallback behavior if a service is unavailable
    - Provides access to available services
 
-8. **settings_manager.py**: Application settings management
+8. **src/settings_manager.py**: Application settings management
    - Loads and saves user preferences
    - Manages API keys securely
    - Stores selected AI models and service preferences
    - Provides access to settings through a consistent interface
 
-9. **file_organizer.py**: Document organization based on analysis
+9. **src/file_organizer.py**: Document organization based on analysis
    - Creates category-based folder structure
    - Moves/copies files to appropriate locations
    - Generates metadata files with analysis results
 
-10. **utils.py**: Helper functions and utilities
+10. **src/utils.py**: Helper functions and utilities
     - File size formatting
     - Filename sanitization
     - Text processing utilities

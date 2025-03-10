@@ -8,6 +8,7 @@ This guide will help you quickly set up and start using the AI Document Organize
 
    ```bash
    git clone https://github.com/yourusername/ai-document-organizer.git
+   cd ai-document-organizer
    ```
 
 2. Install dependencies:
@@ -21,7 +22,7 @@ This guide will help you quickly set up and start using the AI Document Organize
    **Option 1: Using environment variables**
 
    ```bash
-   # For Google Gemini API (recommended)
+   # For Google Gemini API
    # On Windows
    set GOOGLE_API_KEY=your_api_key_here
 

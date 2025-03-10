@@ -1,39 +1,89 @@
 # AI Document Organizer
 
-An intelligent document organization application powered by Google Gemini Flash 2.0 AI.
+An intelligent document organization application powered by AI, supporting both Google Gemini and OpenAI models.
 
-This application automatically analyzes, categorizes, and organizes various document types
-based on their content, with advanced document relationship detection capabilities.
+## Overview
 
-## Documentation
+The AI Document Organizer helps you automatically organize your documents by analyzing their content with advanced AI models. The application can process and categorize multiple file formats, creating a structured folder system with meaningful categories based on document content.
 
-Detailed documentation can be found in the [docs](./docs) directory:
+## Project Structure
 
-- [User Guide](docs/README.md)
-- [Quick Start Guide](docs/QUICK_START_GUIDE.md)
-- [Developer Guide](docs/DEVELOPER_GUIDE.md)
-- [Alternative AI Models](docs/ALTERNATIVE_AI_MODELS.md)
+```
+AI-Document-Organizer/
+├── src/                      # All source code
+│   ├── ai_analyzer.py        # Google Gemini AI integration
+│   ├── openai_analyzer.py    # OpenAI integration
+│   ├── ai_service_factory.py # Factory for creating AI services
+│   ├── file_analyzer.py      # Document scanning and analysis
+│   ├── file_organizer.py     # Document organization
+│   ├── file_parser.py        # Content extraction from files
+│   ├── gui.py                # User interface
+│   ├── settings_manager.py   # Application settings
+│   └── utils.py              # Helper utilities
+├── docs/                     # Documentation
+│   ├── README.md             # User guide
+│   ├── QUICK_START_GUIDE.md  # Quick start guide
+│   ├── DEVELOPER_GUIDE.md    # Developer documentation
+│   └── ALTERNATIVE_AI_MODELS.md # AI model information
+├── assets/                   # Application assets
+│   └── generated-icon.png    # Application icon
+├── packaging/                # Packaging-related files
+│   ├── ai_document_organizer.spec # PyInstaller specification
+│   ├── installer.nsi         # NSIS installer script
+│   └── build_exe.py          # Build script
+├── tests/                    # Test files
+├── main.py                   # Main entry point
+├── requirements.txt          # Dependencies
+└── README.md                 # This file
+```
 
 ## Features
 
-- Automatic document categorization using AI
-- Intelligent document relationship detection
-- Support for multiple file formats (CSV, Excel, HTML, Markdown, Text, Word)
-- Content summarization and keyword extraction
-- Windows-optimized user interface
-- Batch processing for large document sets
-- Smart rate limiting to prevent API quota errors
-- Configurable batch size and delay settings
+- **Smart Document Analysis**: Uses Google Gemini or OpenAI models to understand document content
+- **Multiple AI Model Support**:
+  - Google Gemini models (2.0 Flash, 1.5 Flash, 1.5 Pro, etc.)
+  - OpenAI models (GPT-4o, GPT-4 Turbo, GPT-3.5 Turbo, etc.)
+- **In-App API Key Management**: Enter and save API keys directly in the settings
+- **Model Selection**: Choose from available AI models for each service
+- **Automatic Categorization**: Creates logical folder structure based on document topics and content
+- **Multi-Format Support**: Works with various file types (CSV, Excel, HTML, Markdown, Text, Word)
+- **Content Extraction**: Automatically extracts and analyzes text from all supported formats
+- **Windows-Optimized**: Native Windows interface with proper file handling
+- **Batch Processing**: Processes files in configurable batches to optimize performance
+- **Rate Limiting Controls**: Configure batch size and delay to avoid API rate limits
+
+## Requirements
+
+- Windows 10/11
+- Python 3.8 or higher
+- API key for Google Gemini or OpenAI
 
 ## Installation
 
-```bash
-# Clone the repository
-git clone https://github.com/yourusername/ai-document-organizer.git
+1. Clone the repository:
 
-# Install dependencies
-pip install -r requirements.txt
-```
+   ```bash
+   git clone https://github.com/yourusername/ai-document-organizer.git
+   cd ai-document-organizer
+   ```
+
+2. Install dependencies:
+
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. Set up your API key:
+   - In the application settings (recommended)
+   - Or as an environment variable:
+
+     ```bash
+     # For Google Gemini API
+     set GOOGLE_API_KEY=your_api_key_here
+
+     # OR for OpenAI API
+     set OPENAI_API_KEY=your_api_key_here
+     ```
 
 ## Running the Application
 
@@ -41,23 +91,17 @@ pip install -r requirements.txt
 python main.py
 ```
 
-## API Rate Limiting
+## Documentation
 
-When processing large numbers of documents, the application may encounter API rate limits from Google Gemini. The application includes the following features to handle this:
+- [User Guide](docs/README.md)
+- [Quick Start Guide](docs/QUICK_START_GUIDE.md)
+- [Developer Guide](docs/DEVELOPER_GUIDE.md)
+- [Alternative AI Models](docs/ALTERNATIVE_AI_MODELS.md)
 
-- **Configurable Batch Size**: Reduce the number of files processed in each batch (default: 5)
-- **Batch Delay**: Add a delay between processing batches (default: 10 seconds)
-- **Exponential Backoff**: Automatically retry failed API calls with increasing delays
-- **Error Handling**: Gracefully handle rate limit errors and continue processing
-- **Conservative Rate Limits**: Default settings are conservative to prevent quota errors
+## Packaging for Distribution
 
-These settings can be adjusted in the application's Settings tab.
+To create a standalone Windows executable and installer, see the [Packaging Guide](packaging/PACKAGING.md).
 
-## API Keys
+## License
 
-To use the AI features, you need to set up your API keys:
-
-1. Get a Google Gemini API key from [Google AI Studio](https://ai.google.dev/)
-2. Set the environment variable `GOOGLE_API_KEY` with your API key
-
-Alternatively, you can use OpenAI by setting the `OPENAI_API_KEY` environment variable.
+MIT License - See [LICENSE.txt](docs/LICENSE.txt) for details.

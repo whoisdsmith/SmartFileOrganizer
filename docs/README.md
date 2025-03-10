@@ -57,13 +57,20 @@ The AI Document Organizer helps you automatically organize your documents by ana
 2. Install required dependencies:
 
    ```
-   pip install beautifulsoup4 chardet python-docx google-generativeai numpy openai openpyxl pandas
+   pip install -r requirements.txt
    ```
 
-3. Set up your Google API key as an environment variable:
-   - Open Command Prompt as Administrator
-   - Run: `setx GOOGLE_API_KEY AIzaSyAndYCK_XqP78lnjvVs4o8bFLso_Ar0J_Q` (replace with your actual API key)
-   - Restart Command Prompt for the changes to take effect
+3. Set up your API key:
+   - In the application settings (recommended)
+   - Or as an environment variable:
+
+     ```bash
+     # For Google Gemini API
+     set GOOGLE_API_KEY=your_api_key_here
+
+     # OR for OpenAI API
+     set OPENAI_API_KEY=your_api_key_here
+     ```
 
 ## Quick Start
 
@@ -165,14 +172,14 @@ The Settings tab provides various customization options:
 To verify system functionality without using the GUI:
 
 ```
-python test_document_organizer.py
+python -m tests.test_document_organizer
 ```
 
 This will:
 
-1. Process sample files from the test_files directory
+1. Process sample files from the tests/test_files directory
 2. Generate AI analysis for each file
-3. Organize them into the test_output directory
+3. Organize them into the tests/test_output directory
 4. Create appropriate category folders and metadata files
 
 ### Checking API Connectivity
@@ -180,5 +187,41 @@ This will:
 To verify your Gemini API connection is working properly:
 
 ```
-python test_ai_analyzer.py
+python -m tests.test_ai_services
 ```
+
+### Project Structure
+
+The project follows a clean, organized structure:
+
+```
+AI-Document-Organizer/
+├── src/                      # All source code
+│   ├── ai_analyzer.py        # Google Gemini AI integration
+│   ├── openai_analyzer.py    # OpenAI integration
+│   ├── ai_service_factory.py # Factory for creating AI services
+│   ├── file_analyzer.py      # Document scanning and analysis
+│   ├── file_organizer.py     # Document organization
+│   ├── file_parser.py        # Content extraction from files
+│   ├── gui.py                # User interface
+│   ├── settings_manager.py   # Application settings
+│   └── utils.py              # Helper utilities
+├── docs/                     # Documentation
+│   ├── README.md             # User guide (this file)
+│   ├── QUICK_START_GUIDE.md  # Quick start guide
+│   ├── DEVELOPER_GUIDE.md    # Developer documentation
+│   └── ALTERNATIVE_AI_MODELS.md # AI model information
+├── assets/                   # Application assets
+│   └── generated-icon.png    # Application icon
+├── packaging/                # Packaging-related files
+│   ├── ai_document_organizer.spec # PyInstaller specification
+│   ├── installer.nsi         # NSIS installer script
+│   └── build_exe.py          # Build script
+├── tests/                    # Test files
+├── main.py                   # Main entry point
+└── requirements.txt          # Dependencies
+```
+
+## Packaging for Distribution
+
+To create a standalone Windows executable and installer, see the [Packaging Guide](../packaging/PACKAGING.md).

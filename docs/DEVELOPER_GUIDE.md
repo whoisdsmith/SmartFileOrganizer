@@ -15,7 +15,7 @@ The application follows a modular design with clear separation of concerns:
        ▼                         ▼                         ▼
 ┌───────────────┐        ┌────────────────┐        ┌────────────────┐
 │   User Input  │        │  File System    │        │  Google Gemini │
-│   & Display   │        │  Operations     │        │      API       │
+│   & Display   │        │  Operations     │        │    & OpenAI    │
 └───────────────┘        └────────────────┘        └────────────────┘
 ```
 
@@ -34,11 +34,13 @@ The application follows a modular design with clear separation of concerns:
    - Manages threading for non-blocking operations
    - Implements settings tab for customization options
    - Provides theme management and user preferences
+   - Includes AI model selection and API key management
 
 3. **file_analyzer.py**: Document scanning and analysis
    - Scans directories for supported file types
    - Collects file information
    - Coordinates between parser and AI analyzer
+   - Implements batch processing with configurable size and delay
 
 4. **file_parser.py**: Content extraction from various file formats
    - Implements parsing logic for each supported file type
@@ -48,19 +50,36 @@ The application follows a modular design with clear separation of concerns:
 5. **ai_analyzer.py**: AI processing using Google Gemini
    - Connects to Google Gemini API
    - Constructs appropriate prompts for analysis
-   - Processes API responses and extracts structured data
-   - Performs document relationship detection
-   - Calculates similarity scores and relationship strength ratings
+   - Implements rate limiting and exponential backoff
+   - Provides model selection capabilities
+   - Handles API errors gracefully
 
-6. **file_organizer.py**: Document organization based on analysis
+6. **openai_analyzer.py**: AI processing using OpenAI
+   - Connects to OpenAI API
+   - Constructs appropriate prompts for analysis
+   - Provides model selection capabilities
+   - Handles API errors gracefully
+
+7. **ai_service_factory.py**: Factory for creating AI analyzers
+   - Creates the appropriate AI analyzer based on settings
+   - Handles fallback behavior if a service is unavailable
+   - Provides access to available services
+
+8. **settings_manager.py**: Application settings management
+   - Loads and saves user preferences
+   - Manages API keys securely
+   - Stores selected AI models and service preferences
+   - Provides access to settings through a consistent interface
+
+9. **file_organizer.py**: Document organization based on analysis
    - Creates category-based folder structure
    - Moves/copies files to appropriate locations
    - Generates metadata files with analysis results
 
-7. **utils.py**: Helper functions and utilities
-   - File size formatting
-   - Filename sanitization
-   - Text processing utilities
+10. **utils.py**: Helper functions and utilities
+    - File size formatting
+    - Filename sanitization
+    - Text processing utilities
 
 ### Data Flow
 
@@ -560,3 +579,92 @@ if __name__ == "__main__":
 - `pandas`, `openpyxl`: Excel and CSV handling
 - `numpy`: Numerical computations
 - `openai`: Optional, for OpenAI integration
+
+## AI Service Integration
+
+The application supports multiple AI services through a flexible architecture:
+
+### AI Service Factory
+
+The `AIServiceFactory` class provides a centralized way to create AI analyzers:
+
+```python
+from src.ai_service_factory import AIServiceFactory
+from src.settings_manager import SettingsManager
+
+# Create a settings manager
+settings_manager = SettingsManager()
+
+# Create an analyzer based on settings
+analyzer = AIServiceFactory.create_analyzer(None, settings_manager)
+```
+
+### Adding a New AI Service
+
+To add support for a new AI service:
+
+1. Create a new analyzer class (e.g., `NewServiceAnalyzer`) that implements:
+   - `__init__(self, settings_manager=None)` - Constructor that initializes the service
+   - `analyze_content(self, text, file_type)` - Method to analyze document content
+   - `get_available_models(self)` - Method to return available models
+   - `set_model(self, model_name)` - Method to set the current model
+
+2. Update `AIServiceFactory` to support the new service:
+   - Add the new service to the `get_available_services()` method
+   - Update the `create_analyzer()` method to create your new analyzer
+
+3. Update the GUI to include the new service:
+   - Add the service to the service selection dropdown
+   - Add model selection for the new service
+   - Add API key input for the new service
+
+### Model Selection
+
+The application supports selecting different models for each AI service:
+
+```python
+# Get available models
+models = analyzer.get_available_models()
+
+# Set a specific model
+analyzer.set_model(model_name)
+```
+
+### API Key Management
+
+API keys can be managed through the `SettingsManager`:
+
+```python
+# Get an API key
+api_key = settings_manager.get_api_key(service_type)
+
+# Set an API key
+settings_manager.set_api_key(service_type, api_key)
+```
+
+## Rate Limiting and Error Handling
+
+The application implements several strategies to handle API rate limits:
+
+1. **Configurable Batch Size**: Process fewer files at once
+2. **Batch Delay**: Add a delay between batches
+3. **Exponential Backoff**: Retry failed requests with increasing delays
+4. **Request Rate Limiting**: Limit the number of requests per minute
+
+Example implementation in `AIAnalyzer`:
+
+```python
+def _apply_rate_limit(self):
+    """Apply rate limiting to avoid 429 errors"""
+    current_time = time.time()
+    time_since_last_request = current_time - self.last_request_time
+
+    # If we've made a request too recently, wait
+    if time_since_last_request < self.min_request_interval:
+        sleep_time = self.min_request_interval - time_since_last_request
+        logger.debug(f"Rate limiting: Sleeping for {sleep_time:.2f} seconds")
+        time.sleep(sleep_time)
+
+    # Update the last request time
+    self.last_request_time = time.time()
+```

@@ -13,66 +13,138 @@ class AIAnalyzer:
     Class for analyzing document content using Google Gemini API
     """
 
-    def __init__(self):
-        # Get API key from environment variable
+    def __init__(self, settings_manager=None):
+        # Get API key from environment variable or settings
         api_key = os.environ.get("GOOGLE_API_KEY", "")
+        if not api_key and settings_manager:
+            api_key = settings_manager.get_setting(
+                "ai_service.google_api_key", "")
+            if api_key:
+                os.environ["GOOGLE_API_KEY"] = api_key
+
         if not api_key:
-            print("Warning: GOOGLE_API_KEY environment variable not set.")
+            logger.warning("GOOGLE_API_KEY environment variable not set.")
 
         # Configure the Gemini API
         genai.configure(api_key=api_key)
 
         # Rate limiting settings
-        self.requests_per_minute = 60  # Default limit for Gemini API
+        # More conservative limit (reduced from 60)
+        self.requests_per_minute = 30
+        if settings_manager:
+            self.requests_per_minute = settings_manager.get_setting(
+                "ai_service.requests_per_minute", 30)
+
         self.min_request_interval = 60.0 / \
             self.requests_per_minute  # seconds between requests
         self.last_request_time = 0
         self.max_retries = 5
+        if settings_manager:
+            self.max_retries = settings_manager.get_setting(
+                "ai_service.max_retries", 5)
+
         self.base_delay = 2  # Base delay in seconds for exponential backoff
+        self.settings_manager = settings_manager
 
         # Get available models
         try:
-            models = [m.name for m in genai.list_models()]
-            print(f"Available Gemini models: {models}")
+            self.available_models = [m.name for m in genai.list_models()]
+            logger.info(f"Available Gemini models: {self.available_models}")
 
-            # Find the most suitable model from available models
-            preferred_models = [
-                'models/gemini-2.0-flash',
-                'models/gemini-1.5-flash',
-                'models/gemini-1.5-pro',
-                'models/gemini-1.0-pro',
-                'gemini-pro'  # backwards compatibility format
-            ]
+            # Get the selected model from settings if available
+            selected_model = None
+            if settings_manager:
+                selected_model = settings_manager.get_selected_model("google")
 
-            # Find the first available preferred model
-            model_name = None
-            for preferred in preferred_models:
-                if preferred in models:
-                    model_name = preferred
-                    break
+            # Check if the selected model is available
+            if selected_model and selected_model in self.available_models:
+                model_name = selected_model
+                logger.info(
+                    f"Using selected model from settings: {model_name}")
+            else:
+                # Find the most suitable model from available models
+                preferred_models = [
+                    'models/gemini-2.0-flash',
+                    'models/gemini-1.5-flash',
+                    'models/gemini-1.5-pro',
+                    'models/gemini-1.0-pro',
+                    'gemini-pro'  # backwards compatibility format
+                ]
 
-            # If none of our preferred models are available, use the first model that has "gemini" in the name
-            if not model_name:
-                for m in models:
-                    if 'gemini' in m.lower():
-                        model_name = m
+                # Find the first available preferred model
+                model_name = None
+                for preferred in preferred_models:
+                    if preferred in self.available_models:
+                        model_name = preferred
                         break
 
-            # If we still don't have a model, use the first available model
-            if not model_name and models:
-                model_name = models[0]
+                # If none of our preferred models are available, use the first model that has "gemini" in the name
+                if not model_name:
+                    for m in self.available_models:
+                        if 'gemini' in m.lower():
+                            model_name = m
+                            break
 
-            if not model_name:
-                raise ValueError("No suitable Gemini models available")
+                # If we still don't have a model, use the first available model
+                if not model_name and self.available_models:
+                    model_name = self.available_models[0]
 
-            print(f"Using model: {model_name}")
+                if not model_name:
+                    raise ValueError("No suitable Gemini models available")
+
+                # Save the selected model to settings
+                if settings_manager and model_name:
+                    settings_manager.set_selected_model("google", model_name)
+
+            logger.info(f"Using model: {model_name}")
             self.model = genai.GenerativeModel(model_name)
+            self.model_name = model_name
         except Exception as e:
-            print(f"Error getting Gemini models: {e}")
+            logger.error(f"Error getting Gemini models: {e}")
             # Fallback to a common model format if there's an error
             fallback_model = "models/gemini-1.5-pro"
-            print(f"Falling back to {fallback_model} model")
+            logger.warning(f"Falling back to {fallback_model} model")
             self.model = genai.GenerativeModel(fallback_model)
+            self.model_name = fallback_model
+            self.available_models = [fallback_model]
+
+    def get_available_models(self):
+        """
+        Get list of available Gemini models
+
+        Returns:
+            List of model names
+        """
+        return self.available_models
+
+    def set_model(self, model_name):
+        """
+        Set the model to use for analysis
+
+        Args:
+            model_name: Name of the model to use
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            if model_name in self.available_models:
+                self.model = genai.GenerativeModel(model_name)
+                self.model_name = model_name
+
+                # Save to settings if available
+                if self.settings_manager:
+                    self.settings_manager.set_selected_model(
+                        "google", model_name)
+
+                logger.info(f"Switched to model: {model_name}")
+                return True
+            else:
+                logger.warning(f"Model {model_name} not available")
+                return False
+        except Exception as e:
+            logger.error(f"Error setting model: {e}")
+            return False
 
     def analyze_content(self, text, file_type):
         """
@@ -96,7 +168,7 @@ class AIAnalyzer:
             analysis = self._get_content_analysis(truncated_text, file_type)
             return analysis
         except Exception as e:
-            print(f"Error in AI analysis: {str(e)}")
+            logger.error(f"Error in AI analysis: {str(e)}")
             # Return basic analysis if AI fails
             return {
                 "category": "Unclassified",

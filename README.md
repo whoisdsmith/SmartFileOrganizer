@@ -45,10 +45,11 @@ python main.py
 
 When processing large numbers of documents, the application may encounter API rate limits from Google Gemini. The application includes the following features to handle this:
 
-- **Configurable Batch Size**: Reduce the number of files processed in each batch (default: 10)
-- **Batch Delay**: Add a delay between processing batches (default: 5 seconds)
+- **Configurable Batch Size**: Reduce the number of files processed in each batch (default: 5)
+- **Batch Delay**: Add a delay between processing batches (default: 10 seconds)
 - **Exponential Backoff**: Automatically retry failed API calls with increasing delays
 - **Error Handling**: Gracefully handle rate limit errors and continue processing
+- **Conservative Rate Limits**: Default settings are conservative to prevent quota errors
 
 These settings can be adjusted in the application's Settings tab.
 

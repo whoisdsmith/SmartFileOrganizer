@@ -13,6 +13,7 @@ from .file_analyzer import FileAnalyzer
 from .file_organizer import FileOrganizer
 from .settings_manager import SettingsManager
 from .ai_analyzer import AIAnalyzer
+from .openai_analyzer import OpenAIAnalyzer
 from .utils import get_readable_size, sanitize_filename
 
 logger = logging.getLogger("AIDocumentOrganizer")
@@ -80,7 +81,8 @@ class DocumentOrganizerApp:
 
         self.analyzer = FileAnalyzer()
         self.organizer = FileOrganizer()
-        self.ai_analyzer = AIAnalyzer()
+        self.ai_analyzer = AIAnalyzer(self.settings_manager)
+        self.openai_analyzer = OpenAIAnalyzer(self.settings_manager)
         self.status_queue = queue.Queue()
         self.is_scanning = False
         self.is_organizing = False
@@ -127,6 +129,10 @@ class DocumentOrganizerApp:
         # Settings tab
         self.settings_tab = ttk.Frame(self.notebook)
         self.notebook.add(self.settings_tab, text="Settings")
+
+        # About tab
+        self.about_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.about_tab, text="About")
 
         # Create settings widgets
         self._create_settings_widgets()
@@ -892,9 +898,26 @@ class DocumentOrganizerApp:
         settings_frame = ttk.Frame(self.settings_tab)
         settings_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
+        # Create a notebook for settings tabs
+        settings_notebook = ttk.Notebook(settings_frame)
+        settings_notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # Processing tab
+        processing_tab = ttk.Frame(settings_notebook)
+        settings_notebook.add(processing_tab, text="Processing")
+
+        # AI Models tab
+        ai_models_tab = ttk.Frame(settings_notebook)
+        settings_notebook.add(ai_models_tab, text="AI Models")
+
+        # Organization tab
+        organization_tab = ttk.Frame(settings_notebook)
+        settings_notebook.add(organization_tab, text="Organization")
+
+        # ===== Processing Settings =====
         # Batch processing settings
         batch_frame = ttk.LabelFrame(
-            settings_frame, text="Batch Processing Settings")
+            processing_tab, text="Batch Processing Settings")
         batch_frame.pack(fill=tk.X, padx=5, pady=5)
 
         # Batch size setting
@@ -934,8 +957,129 @@ class DocumentOrganizerApp:
         ttk.Label(rate_limit_frame, text="Note: Lower batch size and higher delay helps avoid API rate limits").pack(
             anchor=tk.W, padx=5, pady=5)
 
+        # ===== AI Models Settings =====
+        # Service selection
+        self.service_type = tk.StringVar(
+            value=self.settings_manager.get_setting("ai_service.service_type", "google"))
+
+        service_frame = ttk.LabelFrame(
+            ai_models_tab, text="AI Service Selection")
+        service_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        service_selection_frame = ttk.Frame(service_frame)
+        service_selection_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        ttk.Label(service_selection_frame, text="AI Service:").pack(
+            side=tk.LEFT, padx=5)
+
+        # Get available services
+        from src.ai_service_factory import AIServiceFactory
+        available_services = AIServiceFactory.get_available_services()
+
+        service_combobox = ttk.Combobox(service_selection_frame, textvariable=self.service_type,
+                                        values=available_services, width=10, state="readonly")
+        service_combobox.pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(service_selection_frame, text="Set as Default",
+                   command=self.save_service_type).pack(side=tk.RIGHT, padx=5)
+
+        # API Keys frame
+        api_keys_frame = ttk.LabelFrame(ai_models_tab, text="API Keys")
+        api_keys_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        # Google API Key
+        google_key_frame = ttk.Frame(api_keys_frame)
+        google_key_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        ttk.Label(google_key_frame, text="Google API Key:").pack(
+            side=tk.LEFT, padx=5)
+
+        # Get current key from settings or environment
+        google_api_key = self.settings_manager.get_api_key("google")
+        self.google_api_key = tk.StringVar(value=google_api_key)
+
+        google_key_entry = ttk.Entry(
+            google_key_frame, textvariable=self.google_api_key, width=40, show="*")
+        google_key_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+
+        ttk.Button(google_key_frame, text="Save",
+                   command=lambda: self.save_api_key("google")).pack(side=tk.RIGHT, padx=5)
+
+        # OpenAI API Key
+        openai_key_frame = ttk.Frame(api_keys_frame)
+        openai_key_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        ttk.Label(openai_key_frame, text="OpenAI API Key:").pack(
+            side=tk.LEFT, padx=5)
+
+        # Get current key from settings or environment
+        openai_api_key = self.settings_manager.get_api_key("openai")
+        self.openai_api_key = tk.StringVar(value=openai_api_key)
+
+        openai_key_entry = ttk.Entry(
+            openai_key_frame, textvariable=self.openai_api_key, width=40, show="*")
+        openai_key_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+
+        ttk.Button(openai_key_frame, text="Save",
+                   command=lambda: self.save_api_key("openai")).pack(side=tk.RIGHT, padx=5)
+
+        # Model selection frame
+        model_frame = ttk.LabelFrame(ai_models_tab, text="Model Selection")
+        model_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        # Create analyzers to get available models
+        self.google_analyzer = AIAnalyzer(self.settings_manager)
+        self.openai_analyzer = OpenAIAnalyzer(self.settings_manager)
+
+        # Google model selection
+        google_model_frame = ttk.Frame(model_frame)
+        google_model_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        ttk.Label(google_model_frame, text="Google Gemini Model:").pack(
+            side=tk.LEFT, padx=5)
+
+        # Get available Google models
+        google_models = self.google_analyzer.get_available_models()
+
+        # Get current selected model
+        selected_google_model = self.settings_manager.get_selected_model(
+            "google")
+        self.google_model = tk.StringVar(value=selected_google_model)
+
+        self.google_model_combobox = ttk.Combobox(google_model_frame, textvariable=self.google_model,
+                                                  values=google_models, width=30, state="readonly")
+        self.google_model_combobox.pack(
+            side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+
+        ttk.Button(google_model_frame, text="Set",
+                   command=lambda: self.set_model("google")).pack(side=tk.RIGHT, padx=5)
+
+        # OpenAI model selection
+        openai_model_frame = ttk.Frame(model_frame)
+        openai_model_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        ttk.Label(openai_model_frame, text="OpenAI Model:").pack(
+            side=tk.LEFT, padx=5)
+
+        # Get available OpenAI models
+        openai_models = self.openai_analyzer.get_available_models()
+
+        # Get current selected model
+        selected_openai_model = self.settings_manager.get_selected_model(
+            "openai")
+        self.openai_model = tk.StringVar(value=selected_openai_model)
+
+        self.openai_model_combobox = ttk.Combobox(openai_model_frame, textvariable=self.openai_model,
+                                                  values=openai_models, width=30, state="readonly")
+        self.openai_model_combobox.pack(
+            side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+
+        ttk.Button(openai_model_frame, text="Set",
+                   command=lambda: self.set_model("openai")).pack(side=tk.RIGHT, padx=5)
+
+        # ===== Organization Rules =====
         # Organization rules
-        org_frame = ttk.LabelFrame(settings_frame, text="Organization Rules")
+        org_frame = ttk.LabelFrame(organization_tab, text="Organization Rules")
         org_frame.pack(fill=tk.X, padx=5, pady=5)
 
         # Create checkboxes for organization rules
@@ -973,9 +1117,10 @@ class DocumentOrganizerApp:
                               sticky='nsew', padx=5, pady=5)
         rules_help_text.pack(fill='both', expand=True)
 
-        # About section
+        # About tab
         self.about_frame = ttk.LabelFrame(
-            self.settings_tab, text="About", padding=(10, 5))
+            self.about_tab, text="About AI Document Organizer", padding=(10, 5))
+        self.about_frame.pack(fill='both', expand=True, padx=10, pady=10)
 
         # App info
         app_info = ScrolledText(
@@ -992,18 +1137,73 @@ class DocumentOrganizerApp:
         app_info.insert(tk.END, "- Text files (.txt)\n")
         app_info.insert(tk.END, "- Word documents (.docx)\n\n")
         app_info.config(state=tk.DISABLED)
-
-        # Layout settings widgets
-        self.app_settings_frame.pack(fill='x', expand=False, padx=10, pady=10)
-        self.performance_frame.pack(fill='x', expand=False, padx=5, pady=5)
-        self.dir_settings_frame.pack(fill='x', expand=False, padx=5, pady=5)
-        self.ui_frame.pack(fill='x', expand=False, padx=5, pady=5)
-        self.org_rules_frame.pack(fill='x', expand=False, padx=10, pady=10)
-        self.about_frame.pack(fill='both', expand=True, padx=10, pady=10)
         app_info.pack(fill='both', expand=True, padx=5, pady=5)
 
-        # Configure grid weights for organization rules frame
-        self.org_rules_frame.columnconfigure(1, weight=1)
+    def save_service_type(self):
+        """Save the selected AI service type"""
+        try:
+            service_type = self.service_type.get()
+            if self.settings_manager.set_setting("ai_service.service_type", service_type):
+                messagebox.showinfo(
+                    "Settings Saved", f"AI service set to {service_type}")
+                logger.info(f"AI service set to {service_type}")
+            else:
+                messagebox.showwarning(
+                    "Warning", "Could not save AI service setting")
+        except Exception as e:
+            logger.error(f"Error saving AI service type: {str(e)}")
+            messagebox.showerror(
+                "Error", f"Could not save AI service type: {str(e)}")
+
+    def save_api_key(self, service_type):
+        """Save API key for the specified service"""
+        try:
+            if service_type.lower() == "google":
+                api_key = self.google_api_key.get()
+                if self.settings_manager.set_api_key("google", api_key):
+                    messagebox.showinfo(
+                        "API Key Saved", "Google API key saved successfully")
+                    logger.info("Google API key saved")
+                else:
+                    messagebox.showwarning(
+                        "Warning", "Could not save Google API key")
+            elif service_type.lower() == "openai":
+                api_key = self.openai_api_key.get()
+                if self.settings_manager.set_api_key("openai", api_key):
+                    messagebox.showinfo(
+                        "API Key Saved", "OpenAI API key saved successfully")
+                    logger.info("OpenAI API key saved")
+                else:
+                    messagebox.showwarning(
+                        "Warning", "Could not save OpenAI API key")
+        except Exception as e:
+            logger.error(f"Error saving API key: {str(e)}")
+            messagebox.showerror("Error", f"Could not save API key: {str(e)}")
+
+    def set_model(self, service_type):
+        """Set the selected model for the specified service"""
+        try:
+            if service_type.lower() == "google":
+                model_name = self.google_model.get()
+                if self.google_analyzer.set_model(model_name):
+                    messagebox.showinfo(
+                        "Model Set", f"Google model set to {model_name}")
+                    logger.info(f"Google model set to {model_name}")
+                else:
+                    messagebox.showwarning(
+                        "Warning", f"Could not set Google model to {model_name}")
+            elif service_type.lower() == "openai":
+                model_name = self.openai_model.get()
+                if self.openai_analyzer.set_model(model_name):
+                    messagebox.showinfo(
+                        "Model Set", f"OpenAI model set to {model_name}")
+                    logger.info(f"OpenAI model set to {model_name}")
+                else:
+                    messagebox.showwarning(
+                        "Warning", f"Could not set OpenAI model to {model_name}")
+        except Exception as e:
+            logger.error(f"Error setting model: {str(e)}")
+            messagebox.showerror("Error", f"Could not set model: {str(e)}")
 
     def organize_files_thread(self, files, target_dir):
         """Thread function to organize files"""

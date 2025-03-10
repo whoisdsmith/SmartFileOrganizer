@@ -32,10 +32,10 @@ class FileAnalyzer:
         }
 
         # Default batch processing settings
-        self.batch_size = 10  # Reduced from 20 to 10 to avoid rate limits
-        # Reduced thread pool size
-        self.max_workers = min(8, (os.cpu_count() or 1) * 2)
-        self.batch_delay = 5.0  # Seconds to wait between batches
+        self.batch_size = 5  # Reduced from 10 to 5 to be more conservative
+        # Further reduced thread pool size
+        self.max_workers = min(4, (os.cpu_count() or 1))
+        self.batch_delay = 10.0  # Increased from 5 to 10 seconds to wait between batches
         self.progress_callback = None  # Callback for progress updates
 
     def scan_directory(self, directory_path, batch_size=None, batch_delay=None, callback=None):

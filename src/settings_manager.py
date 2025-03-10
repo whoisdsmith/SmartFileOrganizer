@@ -29,8 +29,8 @@ class SettingsManager:
 
         # Default settings
         self.default_settings = {
-            "batch_size": 10,
-            "batch_delay": 5,
+            "batch_size": 5,
+            "batch_delay": 10,
             "source_directory": os.path.expanduser(r"~\Documents"),
             "target_directory": os.path.expanduser(r"~\Documents\Organized"),
             "theme": "clam",
@@ -43,14 +43,97 @@ class SettingsManager:
             "ai_service": {
                 "service_type": "google",  # 'google' or 'openai'
                 "google_api_key": "",      # Stored encrypted in actual implementation
-                "openai_api_key": "",       # Stored encrypted in actual implementation
-                "requests_per_minute": 60,   # Default API rate limit
+                "openai_api_key": "",      # Stored encrypted in actual implementation
+                "google_model": "models/gemini-2.0-flash",  # Default Google model
+                "openai_model": "gpt-4-turbo-preview",      # Default OpenAI model
+                "requests_per_minute": 30,   # Default API rate limit
                 "max_retries": 5            # Maximum number of retries for rate limit errors
             }
         }
 
         # Load settings
         self.settings = self.load_settings()
+
+    def get_api_key(self, service_type):
+        """
+        Get API key for the specified service
+
+        Args:
+            service_type: 'google' or 'openai'
+
+        Returns:
+            API key string or empty string if not set
+        """
+        # First check environment variables
+        if service_type.lower() == 'google':
+            key = os.environ.get("GOOGLE_API_KEY", "")
+            if not key:
+                # If not in environment, check settings
+                key = self.get_setting("ai_service.google_api_key", "")
+            return key
+        elif service_type.lower() == 'openai':
+            key = os.environ.get("OPENAI_API_KEY", "")
+            if not key:
+                # If not in environment, check settings
+                key = self.get_setting("ai_service.openai_api_key", "")
+            return key
+        return ""
+
+    def set_api_key(self, service_type, api_key):
+        """
+        Set API key for the specified service
+
+        Args:
+            service_type: 'google' or 'openai'
+            api_key: API key string
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if service_type.lower() == 'google':
+            # Set in environment for current session
+            os.environ["GOOGLE_API_KEY"] = api_key
+            # Save in settings for future sessions
+            return self.set_setting("ai_service.google_api_key", api_key)
+        elif service_type.lower() == 'openai':
+            # Set in environment for current session
+            os.environ["OPENAI_API_KEY"] = api_key
+            # Save in settings for future sessions
+            return self.set_setting("ai_service.openai_api_key", api_key)
+        return False
+
+    def get_selected_model(self, service_type):
+        """
+        Get the selected model for the specified service
+
+        Args:
+            service_type: 'google' or 'openai'
+
+        Returns:
+            Model name string
+        """
+        if service_type.lower() == 'google':
+            return self.get_setting("ai_service.google_model", "models/gemini-2.0-flash")
+        elif service_type.lower() == 'openai':
+            return self.get_setting("ai_service.openai_model", "gpt-4-turbo-preview")
+        return ""
+
+    def set_selected_model(self, service_type, model_name):
+        """
+        Set the selected model for the specified service
+
+        Args:
+            service_type: 'google' or 'openai'
+            model_name: Model name string
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if service_type.lower() == 'google':
+            return self.set_setting("ai_service.google_model", model_name)
+        elif service_type.lower() == 'openai':
+            return self.set_setting("ai_service.openai_model", model_name)
+        return False
 
     def load_settings(self):
         """Load settings from file"""

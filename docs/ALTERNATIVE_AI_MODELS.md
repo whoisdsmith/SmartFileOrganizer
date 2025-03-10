@@ -7,12 +7,12 @@ This document explains how to use different AI models with the AI Document Organ
 The AI Document Organizer now supports two AI services:
 
 1. **Google Gemini** (Default)
-   - Uses Google's Gemini 2.0 Flash model
+   - Supports multiple Gemini models (2.0 Flash, 1.5 Flash, 1.5 Pro, etc.)
    - Provides advanced document analysis capabilities
    - Offers efficient processing with lower token usage
 
 2. **OpenAI**
-   - Uses OpenAI's gpt-4o model
+   - Supports multiple models (GPT-4o, GPT-4 Turbo, GPT-3.5 Turbo, etc.)
    - May provide different analysis results for certain document types
    - Requires an OpenAI API key
 
@@ -30,14 +30,16 @@ GOOGLE_API_KEY=your_google_api_key  # if using 'google'
 OPENAI_API_KEY=your_openai_api_key  # if using 'openai'
 ```
 
-### 2. Using the Settings Interface
+### 2. Using the Settings Interface (Recommended)
 
 1. Open the application
 2. Go to the "Settings" tab
-3. Find the "AI Service Configuration" section
-4. Select your preferred AI service
-5. Enter your API key
-6. Click "Save Settings"
+3. Select the "AI Models" tab
+4. In the "AI Service Selection" section, choose your preferred service (Google or OpenAI)
+5. Enter your API key in the appropriate field
+6. Click "Save" to store your API key
+7. Select your preferred model from the dropdown list
+8. Click "Set" to use the selected model
 
 ### 3. Programmatically
 
@@ -45,16 +47,42 @@ If you're extending the application, you can use the AIServiceFactory:
 
 ```python
 from src.ai_service_factory import AIServiceFactory
+from src.settings_manager import SettingsManager
+
+# Create a settings manager
+settings_manager = SettingsManager()
 
 # Create a Google Gemini analyzer
-google_analyzer = AIServiceFactory.create_analyzer('google')
+google_analyzer = AIServiceFactory.create_analyzer('google', settings_manager)
 
 # Create an OpenAI analyzer
-openai_analyzer = AIServiceFactory.create_analyzer('openai')
+openai_analyzer = AIServiceFactory.create_analyzer('openai', settings_manager)
 
-# Let the factory choose based on environment variables
-default_analyzer = AIServiceFactory.create_analyzer()
+# Let the factory choose based on settings and environment variables
+default_analyzer = AIServiceFactory.create_analyzer(None, settings_manager)
 ```
+
+## Available Models
+
+### Google Gemini Models
+
+The application automatically detects available Gemini models from your API account. Common models include:
+
+- **models/gemini-2.0-flash** (Default) - Latest and most efficient model
+- **models/gemini-1.5-flash** - Fast, efficient model with good performance
+- **models/gemini-1.5-pro** - More powerful model for complex analysis
+- **models/gemini-1.0-pro** - Original Gemini model
+
+### OpenAI Models
+
+The application supports the following OpenAI models:
+
+- **gpt-4o** - Latest and most powerful model (May 2024)
+- **gpt-4-turbo** - Fast, powerful model
+- **gpt-4-turbo-preview** - Preview version
+- **gpt-4** - Standard GPT-4 model
+- **gpt-3.5-turbo** - Faster, cheaper model
+- **gpt-3.5-turbo-16k** - Extended context model
 
 ## Comparing AI Services
 
@@ -64,14 +92,14 @@ default_analyzer = AIServiceFactory.create_analyzer()
   - Lower cost per token
   - Faster processing for large documents
   - Excellent at categorization tasks
-  - Support for Gemini 2.0 Flash model
+  - Support for multiple Gemini models
 
 - **Use when**:
   - Processing large batches of documents
   - Working with technical or business-oriented content
   - Cost efficiency is important
 
-### OpenAI (GPT-4o)
+### OpenAI (GPT-4o and others)
 
 - **Pros**:
   - May provide more nuanced relationship detection
@@ -110,7 +138,7 @@ If the selected AI service is not available (e.g., missing API key), the applica
 1. Visit [Google AI Studio](https://ai.google.dev/)
 2. Create or sign in to your Google account
 3. Create a new API key
-4. Copy the key and use it in the application
+4. Copy the key and use it in the application's Settings tab
 
 ### OpenAI API Key
 
@@ -118,33 +146,18 @@ If the selected AI service is not available (e.g., missing API key), the applica
 2. Create or sign in to your OpenAI account
 3. Navigate to API keys section
 4. Create a new secret key
-5. Copy the key and use it in the application
+5. Copy the key and use it in the application's Settings tab
 
-#### Setting up OpenAI API Key
+## Rate Limiting and API Quotas
 
-##### Windows
+Both Google and OpenAI have rate limits on their APIs. The application includes features to help manage these limits:
 
-```
-setx OPENAI_API_KEY "your-openai-api-key-here"
-```
+- **Configurable Batch Size**: Reduce the number of files processed in each batch (default: 5)
+- **Batch Delay**: Add a delay between processing batches (default: 10 seconds)
+- **Exponential Backoff**: Automatically retry failed API calls with increasing delays
+- **Error Handling**: Gracefully handle rate limit errors and continue processing
 
-##### macOS/Linux
-
-```
-export OPENAI_API_KEY="your-openai-api-key-here"
-```
-
-Add to your `~/.bashrc` or `~/.zshrc` file for persistence.
-
-##### Verifying the API Key
-
-Run the test script to verify your OpenAI API key is working correctly:
-
-```
-python test_api_keys.py
-```
-
-This will test both Google and OpenAI API keys and report their status.
+These settings can be adjusted in the "Processing" tab of the Settings page.
 
 ## Troubleshooting
 
@@ -155,3 +168,4 @@ If you encounter issues with your AI service:
 3. Ensure your API account has sufficient credits
 4. Try switching to the alternative AI service
 5. Check the application logs for specific error messages
+6. Reduce batch size or increase batch delay if encountering rate limit errors

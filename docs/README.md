@@ -1,14 +1,19 @@
 # AI Document Organizer
 
-A Windows desktop application that uses Google's Gemini 2.0 Flash AI to automatically analyze and intelligently organize various document types.
+A Windows desktop application that uses AI to automatically analyze and intelligently organize various document types, supporting both Google Gemini and OpenAI models.
 
 ## Overview
 
-The AI Document Organizer helps you automatically organize your documents by analyzing their content with Google's advanced Gemini AI. The application can process and categorize multiple file formats, creating a structured folder system with meaningful categories based on document content.
+The AI Document Organizer helps you automatically organize your documents by analyzing their content with advanced AI models. The application can process and categorize multiple file formats, creating a structured folder system with meaningful categories based on document content.
 
 ## Features
 
-- **Smart Document Analysis**: Uses Google Gemini 2.0 Flash AI to understand document content
+- **Smart Document Analysis**: Uses Google Gemini or OpenAI models to understand document content
+- **Multiple AI Model Support**:
+  - Google Gemini models (2.0 Flash, 1.5 Flash, 1.5 Pro, etc.)
+  - OpenAI models (GPT-4o, GPT-4 Turbo, GPT-3.5 Turbo, etc.)
+- **In-App API Key Management**: Enter and save API keys directly in the settings
+- **Model Selection**: Choose from available AI models for each service
 - **Automatic Categorization**: Creates logical folder structure based on document topics and content
 - **Multi-Format Support**: Works with various file types:
   - CSV files
@@ -36,6 +41,7 @@ The AI Document Organizer helps you automatically organize your documents by ana
 - **Context-Aware Suggestions**: Receive intelligent file relationship suggestions when viewing any document
 - **Content Relationship Visualization**: Enhanced visualization of document relationships in reports and metadata
 - **Batch Processing**: Processes files in configurable batches to optimize performance
+- **Rate Limiting Controls**: Configure batch size and delay to avoid API rate limits
 - **Customizable UI**: Choose from multiple themes to match your Windows experience
 - **Persistent Settings**: Save your preferred organization rules, batch sizes, and directory locations
 
@@ -43,7 +49,7 @@ The AI Document Organizer helps you automatically organize your documents by ana
 
 - Windows 10/11
 - Python 3.8 or higher
-- Google API key with access to Gemini models
+- API key for Google Gemini or OpenAI
 
 ## Installation
 
@@ -176,86 +182,3 @@ To verify your Gemini API connection is working properly:
 ```
 python test_ai_analyzer.py
 ```
-
-### Testing Document Relationships
-
-To test the document relationship detection features:
-
-```
-python test_relationships.py
-```
-
-For more advanced deep contextual relationship detection:
-
-```
-python test_deep_relationships.py
-```
-
-These tests will analyze sample documents and identify different types of relationships between them, including prerequisite, sequential, contextual, and extension relationships with detailed strength scoring and explanations.
-
-## Troubleshooting
-
-- **API Key Issues**: Make sure your GOOGLE_API_KEY environment variable is correctly set
-- **File Access Errors**: Ensure you have proper permissions to read source files and write to target directory
-- **Model Availability**: The application will attempt to use the most suitable Gemini model available to your API key
-- **Large Files**: Very large files may be truncated during analysis to meet API limitations
-
-## Technical Details
-
-The application consists of several key components:
-
-- **GUI Module**: Creates and manages the application interface
-- **File Parser**: Extracts text content from various file formats
-- **AI Analyzer**: Processes document content using Google Gemini 2.0 Flash API
-  - Content analysis and categorization
-  - Document relationship detection with advanced contextual analysis
-  - Similarity scoring with detailed explanations
-  - Relationship type identification (prerequisite, sequential, contextual, extension)
-- **File Organizer**: Creates categorized folder structure based on analysis
-  - Organizes files into appropriate folders
-  - Generates comprehensive metadata files
-  - Creates detailed content summaries
-  - Produces relationship visualizations in reports
-
-Each document is analyzed to determine:
-
-- The most appropriate category for organization
-- Keywords representing document topics
-- A concise summary of document content
-- Relationships to other documents in the collection
-- Relationship types and strength scores
-
-## Metadata Format
-
-For each processed file, a metadata (.meta.txt) file is created containing:
-
-```
-Filename: [original filename]
-Original Path: [source path]
-Type: [file type]
-Size: [file size]
-Category: [AI-determined category]
-Theme: [primary document theme]
-Keywords: [comma-separated keywords]
-
-Summary:
-[AI-generated summary of document content]
-
-Related Documents:
-- [related_filename_1]: [relationship strength] relationship - [relationship explanation]
-- [related_filename_2]: [relationship strength] relationship - [relationship explanation]
-- [related_filename_3]: [relationship strength] relationship - [relationship explanation]
-
-Metadata:
-- [metadata key]: [metadata value]
-```
-
-The Related Documents section shows the most closely related documents based on AI analysis, with strength ratings (High, Medium, Low) and explanations of how the documents are related.
-
-## License
-
-[Include appropriate license information here]
-
-## Credits
-
-This application uses Google's Gemini 2.0 Flash AI technology for document analysis.

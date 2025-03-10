@@ -120,6 +120,28 @@ If the selected AI service is not available (e.g., missing API key), the applica
 4. Create a new secret key
 5. Copy the key and use it in the application
 
+#### Setting up OpenAI API Key
+
+##### Windows
+```
+setx OPENAI_API_KEY "your-openai-api-key-here"
+```
+
+##### macOS/Linux
+```
+export OPENAI_API_KEY="your-openai-api-key-here"
+```
+Add to your `~/.bashrc` or `~/.zshrc` file for persistence.
+
+##### Verifying the API Key
+
+Run the test script to verify your OpenAI API key is working correctly:
+```
+python test_api_keys.py
+```
+
+This will test both Google and OpenAI API keys and report their status.
+
 ## Troubleshooting
 
 If you encounter issues with your AI service:

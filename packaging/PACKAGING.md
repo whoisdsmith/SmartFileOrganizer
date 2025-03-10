@@ -31,17 +31,17 @@ This document explains how to package the AI Document Organizer application into
 
 ### Method 2: Manual PyInstaller command
 
-1. Navigate to the packaging directory:
+1. Navigate to the project root directory:
    ```
-   cd packaging
-   ```
-
-2. Run PyInstaller with the spec file:
-   ```
-   pyinstaller --clean ai_document_organizer.spec
+   cd ..
    ```
 
-3. The executable will be created in the `../dist/AI Document Organizer` directory.
+2. Run PyInstaller with the appropriate options:
+   ```
+   pyinstaller --clean --onedir --windowed --name "AI Document Organizer" --icon assets/generated-icon.png --add-data "assets/generated-icon.png;." --add-data "docs;docs" main.py
+   ```
+
+3. The executable will be created in the `dist/AI Document Organizer` directory.
 
 ## Creating the Installer
 
@@ -94,8 +94,8 @@ AI-Document-Organizer/
 
 If the executable fails to run due to missing DLLs or modules:
 
-1. Edit the `ai_document_organizer.spec` file
-2. Add the missing modules to the `hiddenimports` list
+1. Edit the `build_exe.py` file
+2. Add the missing modules to the `--hidden-import` options
 3. Rebuild the executable
 
 ### Icon Issues
@@ -103,7 +103,7 @@ If the executable fails to run due to missing DLLs or modules:
 If the icon doesn't appear correctly:
 
 1. Make sure the icon file (`assets/generated-icon.png`) exists
-2. Try converting the icon to `.ico` format and update the spec file accordingly
+2. Try converting the icon to `.ico` format and update the build command accordingly
 
 ### NSIS Errors
 
@@ -115,9 +115,11 @@ If you encounter errors during NSIS compilation:
 
 ### Version Information
 
-The application version information is stored in `version_info.txt` and is automatically included in the executable when building with the spec file. If you need to update the version:
+The application version information is stored in `version_info.txt`. To include it in the executable:
 
-1. Edit the `version_info.txt` file
-2. Update the version numbers in both `filevers` and `prodvers` tuples
-3. Update the `FileVersion` and `ProductVersion` string values
-4. Rebuild the executable
+1. Edit the `build_exe.py` file
+2. Add the `--version-file` option to the PyInstaller command:
+   ```
+   "--version-file", os.path.join("packaging", "version_info.txt"),
+   ```
+3. Rebuild the executable

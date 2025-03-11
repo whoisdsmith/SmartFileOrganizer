@@ -2,6 +2,7 @@ import os
 import json
 import logging
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger("AIDocumentOrganizer")
 
@@ -11,8 +12,111 @@ class SettingsManager:
     Manages application settings and user preferences
     """
 
-    def __init__(self):
-        """Initialize settings manager"""
+    DEFAULT_SETTINGS = {
+        "batch_size": 5,
+        "batch_delay": 10,
+        "source_directory": os.path.expanduser(r"~\Documents"),
+        "target_directory": os.path.expanduser(r"~\Documents\Organized"),
+        "theme": "clam",
+        "organization_rules": {
+            "create_category_folders": True,
+            "generate_summaries": True,
+            "include_metadata": True,
+            "copy_instead_of_move": True,
+            "use_custom_rules": False,
+            "rules_file": "",
+            "detect_duplicates": False,
+            "duplicate_action": "report",  # 'report', 'move', 'delete', 'keep_newest'
+            "apply_tags": False,
+            "suggest_tags": False
+        },
+        "ai_service": {
+            "service_type": "google",  # 'google' or 'openai'
+            "google_api_key": "",      # Stored encrypted in actual implementation
+            "openai_api_key": "",      # Stored encrypted in actual implementation
+            "google_model": "models/gemini-2.0-flash",  # Default Google model
+            "openai_model": "gpt-4-turbo-preview",      # Default OpenAI model
+            "requests_per_minute": 30,   # Default API rate limit
+            "max_retries": 5            # Maximum number of retries for rate limit errors
+        },
+        "batch_processing": {
+            "use_process_pool": True,     # Use process pool instead of thread pool
+            "adaptive_workers": True,     # Adapt worker count based on system resources
+            "max_workers": 4,             # Maximum number of workers
+            "memory_limit_percent": 80,   # Memory usage limit percentage
+            "enable_pause_resume": True,  # Enable pause/resume functionality
+            "save_job_state": True        # Save job state for resuming later
+        },
+        "image_analysis": {
+            "enabled": True,                  # Enable image analysis
+            "extract_exif": True,             # Extract EXIF metadata
+            "generate_thumbnails": True,      # Generate thumbnails
+            # Thumbnail size [width, height]
+            "thumbnail_size": [200, 200],
+            "vision_api_enabled": False,      # Enable vision API integration
+            "vision_api_provider": "google",  # 'google' or 'azure'
+            # Vision API key (stored encrypted)
+            "vision_api_key": "",
+            "detect_objects": True,           # Detect objects in images
+            # Detect faces in images (privacy concern)
+            "detect_faces": False,
+            # Extract text from images (OCR)
+            "extract_text": True,
+            "content_moderation": False       # Enable content moderation
+        },
+        "document_summarization": {
+            "summary_length": "medium",       # 'short', 'medium', 'long'
+            "extract_key_points": True,       # Extract key points
+            "extract_action_items": True,     # Extract action items
+            "generate_executive_summary": False,  # Generate executive summary
+            "summary_file_format": "md"       # 'txt', 'md', 'html'
+        },
+        "advanced": {
+            "debug_mode": False,
+            "log_level": "INFO",
+            "max_file_size_mb": 50,           # Maximum file size to process in MB
+            "excluded_directories": ["node_modules", ".git", "__pycache__"],
+            "excluded_file_patterns": ["~$*", "Thumbs.db", ".DS_Store"]
+        },
+        # OCR Settings
+        'ocr_config': {
+            'enabled': True,
+            'default_engine': 'auto',  # 'auto', 'tesseract', or 'easyocr'
+            'tesseract_path': 'tesseract',  # Path to Tesseract executable
+            # Minimum confidence score (0-100) for OCR results
+            'confidence_threshold': 60.0,
+            'default_language': 'eng',  # Default OCR language
+            'additional_languages': [],  # Additional languages to support
+            'image_preprocessing': {
+                'enabled': True,
+                'deskew': True,
+                'denoise': True,
+                'contrast_enhancement': True
+            },
+            'pdf_handling': {
+                'force_ocr': False,  # Force OCR even if text is extractable
+                'max_pages': 100,  # Maximum pages to process in a single PDF
+                'dpi': 300,  # DPI for PDF to image conversion
+                'batch_size': 10  # Number of pages to process in parallel
+            },
+            'cache': {
+                'enabled': True,
+                'max_size_mb': 1000,  # Maximum cache size in MB
+                'expiration_days': 30  # Cache expiration in days
+            }
+        }
+    }
+
+    def __init__(self, config_path: Optional[str] = None):
+        """Initialize settings manager with optional config path."""
+        self.logger = logging.getLogger(__name__)
+        self.config_path = config_path or os.path.join(
+            os.path.expanduser('~'),
+            '.smartfileorganizer',
+            'config.json'
+        )
+        self.settings = self.load_settings()
+
         # Determine settings directory based on platform
         if os.name == 'nt':  # Windows
             self.settings_dir = os.path.join(os.path.expanduser(
@@ -26,78 +130,6 @@ class SettingsManager:
 
         # Path to settings file
         self.settings_file = os.path.join(self.settings_dir, "settings.json")
-
-        # Default settings
-        self.default_settings = {
-            "batch_size": 5,
-            "batch_delay": 10,
-            "source_directory": os.path.expanduser(r"~\Documents"),
-            "target_directory": os.path.expanduser(r"~\Documents\Organized"),
-            "theme": "clam",
-            "organization_rules": {
-                "create_category_folders": True,
-                "generate_summaries": True,
-                "include_metadata": True,
-                "copy_instead_of_move": True,
-                "use_custom_rules": False,
-                "rules_file": "",
-                "detect_duplicates": False,
-                "duplicate_action": "report",  # 'report', 'move', 'delete', 'keep_newest'
-                "apply_tags": False,
-                "suggest_tags": False
-            },
-            "ai_service": {
-                "service_type": "google",  # 'google' or 'openai'
-                "google_api_key": "",      # Stored encrypted in actual implementation
-                "openai_api_key": "",      # Stored encrypted in actual implementation
-                "google_model": "models/gemini-2.0-flash",  # Default Google model
-                "openai_model": "gpt-4-turbo-preview",      # Default OpenAI model
-                "requests_per_minute": 30,   # Default API rate limit
-                "max_retries": 5            # Maximum number of retries for rate limit errors
-            },
-            "batch_processing": {
-                "use_process_pool": True,     # Use process pool instead of thread pool
-                "adaptive_workers": True,     # Adapt worker count based on system resources
-                "max_workers": 4,             # Maximum number of workers
-                "memory_limit_percent": 80,   # Memory usage limit percentage
-                "enable_pause_resume": True,  # Enable pause/resume functionality
-                "save_job_state": True        # Save job state for resuming later
-            },
-            "image_analysis": {
-                "enabled": True,                  # Enable image analysis
-                "extract_exif": True,             # Extract EXIF metadata
-                "generate_thumbnails": True,      # Generate thumbnails
-                # Thumbnail size [width, height]
-                "thumbnail_size": [200, 200],
-                "vision_api_enabled": False,      # Enable vision API integration
-                "vision_api_provider": "google",  # 'google' or 'azure'
-                # Vision API key (stored encrypted)
-                "vision_api_key": "",
-                "detect_objects": True,           # Detect objects in images
-                # Detect faces in images (privacy concern)
-                "detect_faces": False,
-                # Extract text from images (OCR)
-                "extract_text": True,
-                "content_moderation": False       # Enable content moderation
-            },
-            "document_summarization": {
-                "summary_length": "medium",       # 'short', 'medium', 'long'
-                "extract_key_points": True,       # Extract key points
-                "extract_action_items": True,     # Extract action items
-                "generate_executive_summary": False,  # Generate executive summary
-                "summary_file_format": "md"       # 'txt', 'md', 'html'
-            },
-            "advanced": {
-                "debug_mode": False,
-                "log_level": "INFO",
-                "max_file_size_mb": 50,           # Maximum file size to process in MB
-                "excluded_directories": ["node_modules", ".git", "__pycache__"],
-                "excluded_file_patterns": ["~$*", "Thumbs.db", ".DS_Store"]
-            }
-        }
-
-        # Load settings from file or use defaults
-        self.settings = self.load_settings()
 
     def get_api_key(self, service_type):
         """
@@ -200,14 +232,14 @@ class SettingsManager:
                     loaded_settings = json.load(f)
 
                 # Merge with defaults to ensure all settings exist
-                merged_settings = self.default_settings.copy()
+                merged_settings = self.DEFAULT_SETTINGS.copy()
                 self._deep_update(merged_settings, loaded_settings)
                 return merged_settings
             else:
-                return self.default_settings.copy()
+                return self.DEFAULT_SETTINGS.copy()
         except Exception as e:
             logger.error(f"Error loading settings: {str(e)}")
-            return self.default_settings.copy()
+            return self.DEFAULT_SETTINGS.copy()
 
     def save_settings(self):
         """
@@ -303,7 +335,7 @@ class SettingsManager:
         Returns:
             Dictionary with batch processing settings
         """
-        return self.settings.get("batch_processing", self.default_settings["batch_processing"])
+        return self.settings.get("batch_processing", self.DEFAULT_SETTINGS["batch_processing"])
 
     def get_image_analysis_settings(self):
         """
@@ -312,7 +344,7 @@ class SettingsManager:
         Returns:
             Dictionary with image analysis settings
         """
-        return self.settings.get("image_analysis", self.default_settings["image_analysis"])
+        return self.settings.get("image_analysis", self.DEFAULT_SETTINGS["image_analysis"])
 
     def get_organization_rules_settings(self):
         """
@@ -321,7 +353,7 @@ class SettingsManager:
         Returns:
             Dictionary with organization rules settings
         """
-        return self.settings.get("organization_rules", self.default_settings["organization_rules"])
+        return self.settings.get("organization_rules", self.DEFAULT_SETTINGS["organization_rules"])
 
     def get_document_summarization_settings(self):
         """
@@ -330,4 +362,4 @@ class SettingsManager:
         Returns:
             Dictionary with document summarization settings
         """
-        return self.settings.get("document_summarization", self.default_settings["document_summarization"])
+        return self.settings.get("document_summarization", self.DEFAULT_SETTINGS["document_summarization"])

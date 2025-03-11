@@ -180,60 +180,62 @@ class DocumentOrganizerApp:
         logger.info("GUI initialized")
 
     def _create_widgets(self):
-        """Create the GUI widgets"""
-        # Create main frames
-        self.main_frame = ttk.Frame(self.root, padding="10")
-        self.top_frame = ttk.Frame(self.main_frame, padding="5")
-        self.middle_frame = ttk.Frame(self.main_frame, padding="5")
-        self.bottom_frame = ttk.Frame(self.main_frame, padding="5")
-
+        """Create and setup all widgets"""
         # Create notebook for tabs
-        self.notebook = ttk.Notebook(self.middle_frame)
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(expand=True, fill='both', padx=5, pady=5)
 
-        # Create tabs
-        self.files_tab = ttk.Frame(self.notebook)
-        self.duplicates_tab = ttk.Frame(self.notebook)
-        self.search_tab = ttk.Frame(self.notebook)
-        self.tags_tab = ttk.Frame(self.notebook)
-        # New tab for organization rules
-        self.rules_tab = ttk.Frame(self.notebook)
-        # New tab for image management
-        self.images_tab = ttk.Frame(self.notebook)
-        # New tab for batch processing
-        self.batch_tab = ttk.Frame(self.notebook)
+        # Create main tabs
+        self.main_tab = ttk.Frame(self.notebook)
         self.settings_tab = ttk.Frame(self.notebook)
+        self.rules_tab = ttk.Frame(self.notebook)
+        self.images_tab = ttk.Frame(self.notebook)
+        self.batch_tab = ttk.Frame(self.notebook)
+        self.ocr_tab = ttk.Frame(self.notebook)  # New OCR tab
 
-        # Add tabs to notebook
-        self.notebook.add(self.files_tab, text="Files")
-        self.notebook.add(self.duplicates_tab, text="Duplicates")
-        self.notebook.add(self.search_tab, text="Advanced Search")
-        self.notebook.add(self.tags_tab, text="Tags")
-        self.notebook.add(self.rules_tab, text="Rules")  # Add new tab
-        self.notebook.add(self.images_tab, text="Images")  # Add new tab
-        self.notebook.add(
-            self.batch_tab, text="Batch Processing")  # Add new tab
-        self.notebook.add(self.settings_tab, text="Settings")
+        self.notebook.add(self.main_tab, text='Main')
+        self.notebook.add(self.settings_tab, text='Settings')
+        self.notebook.add(self.rules_tab, text='Rules')
+        self.notebook.add(self.images_tab, text='Images')
+        self.notebook.add(self.batch_tab, text='Batch')
+        self.notebook.add(self.ocr_tab, text='OCR')  # Add OCR tab
 
-        # Pack notebook
-        self.notebook.pack(fill="both", expand=True, padx=5, pady=5)
+        # Create widgets for each tab
+        self._create_main_tab()
+        self._create_settings_tab()
+        self._create_rules_tab()
+        self._create_images_tab()
+        self._create_batch_tab()
+        self._create_ocr_tab()  # Create OCR tab widgets
 
-        # Create directory selection frame
-        self.dir_frame = ttk.LabelFrame(
-            self.top_frame, text="Directories", padding="5")
+    def _create_main_tab(self):
+        """Create the main tab content"""
+        # Main frame
+        main_frame = ttk.Frame(self.main_tab, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Top frame
+        top_frame = ttk.Frame(main_frame, padding="5")
+        top_frame.pack(fill=tk.X, pady=5)
+
+        # Directory frame
+        dir_frame = ttk.LabelFrame(
+            top_frame, text="Directories", padding="5")
+        dir_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
 
         # Source directory
-        self.source_label = ttk.Label(self.dir_frame, text="Source Directory:")
-        self.source_entry = ttk.Entry(
-            self.dir_frame, textvariable=self.source_dir, width=40)
-        self.source_button = ttk.Button(
-            self.dir_frame, text="Browse...", command=self.browse_source)
+        source_label = ttk.Label(dir_frame, text="Source Directory:")
+        source_entry = ttk.Entry(
+            dir_frame, textvariable=self.source_dir, width=40)
+        source_button = ttk.Button(
+            dir_frame, text="Browse...", command=self.browse_source)
 
         # Target directory
-        self.target_label = ttk.Label(self.dir_frame, text="Target Directory:")
-        self.target_entry = ttk.Entry(
-            self.dir_frame, textvariable=self.target_dir, width=40)
-        self.target_button = ttk.Button(
-            self.dir_frame, text="Browse...", command=self.browse_target)
+        target_label = ttk.Label(dir_frame, text="Target Directory:")
+        target_entry = ttk.Entry(
+            dir_frame, textvariable=self.target_dir, width=40)
+        target_button = ttk.Button(
+            dir_frame, text="Browse...", command=self.browse_target)
 
         # Create the contents of the new tabs
         self._create_rules_tab()
@@ -241,66 +243,66 @@ class DocumentOrganizerApp:
         self._create_batch_tab()
 
         # Create options frame
-        self.options_frame = ttk.LabelFrame(
-            self.top_frame, text="Options", padding="5")
+        options_frame = ttk.LabelFrame(
+            top_frame, text="Options", padding="5")
 
         # Batch size options
-        self.batch_label = ttk.Label(self.options_frame, text="Batch Size:")
-        self.batch_combobox = ttk.Combobox(self.options_frame, textvariable=self.batch_size_var,
-                                           values=["5", "10", "20", "50", "100"], width=5)
-        self.batch_combobox.current(0)  # Default to 5
+        batch_label = ttk.Label(options_frame, text="Batch Size:")
+        batch_combobox = ttk.Combobox(options_frame, textvariable=self.batch_size_var,
+                                      values=["5", "10", "20", "50", "100"], width=5)
+        batch_combobox.current(0)  # Default to 5
 
         # Create action buttons frame
-        self.action_frame = ttk.Frame(self.top_frame, padding="5")
+        action_frame = ttk.Frame(options_frame, padding="5")
 
         # Scan button
-        self.scan_button = ttk.Button(
-            self.action_frame, text="Scan Files", command=self.start_scan)
+        scan_button = ttk.Button(
+            action_frame, text="Scan Files", command=self.start_scan)
 
         # Organize button
-        self.organize_button = ttk.Button(
-            self.action_frame, text="Organize Files", command=self.organize_files)
+        organize_button = ttk.Button(
+            action_frame, text="Organize Files", command=self.organize_files)
 
         # Cancel button
-        self.cancel_button = ttk.Button(
-            self.action_frame, text="Cancel", command=self.cancel_operation)
+        cancel_button = ttk.Button(
+            action_frame, text="Cancel", command=self.cancel_operation)
 
         # Create status frame
-        self.status_frame = ttk.LabelFrame(
-            self.bottom_frame, text="Status", padding="5")
+        status_frame = ttk.LabelFrame(
+            top_frame, text="Status", padding="5")
 
         # Status label
-        self.status_label = ttk.Label(self.status_frame, text="Ready")
+        status_label = ttk.Label(status_frame, text="Ready")
 
         # Progress bar
-        self.progress_bar = ttk.Progressbar(
-            self.status_frame, orient="horizontal", length=400, mode="determinate", variable=self.progress_var)
+        progress_bar = ttk.Progressbar(
+            status_frame, orient="horizontal", length=400, mode="determinate", variable=self.progress_var)
 
         # Progress details
-        self.progress_details = ttk.Label(self.status_frame, text="")
+        progress_details = ttk.Label(status_frame, text="")
 
         # Processed files
-        self.processed_label = ttk.Label(self.status_frame, text="Files: 0")
+        processed_label = ttk.Label(status_frame, text="Files: 0")
 
         # Total files
-        self.total_label = ttk.Label(self.status_frame, text="Total: 0")
+        total_label = ttk.Label(status_frame, text="Total: 0")
 
         # Batch status
-        self.batch_status_label = ttk.Label(self.status_frame, text="")
+        batch_status_label = ttk.Label(status_frame, text="")
 
         # Create files tab content
-        self.files_frame = ttk.Frame(self.files_tab, padding="5")
+        files_frame = ttk.Frame(self.main_tab, padding="5")
 
         # Search frame
-        self.search_frame = ttk.Frame(self.files_frame, padding="5")
-        self.search_label = ttk.Label(self.search_frame, text="Search:")
-        self.search_entry = ttk.Entry(
-            self.search_frame, textvariable=self.search_var, width=30)
-        self.search_entry.bind("<KeyRelease>", self.search_files)
+        search_frame = ttk.Frame(files_frame, padding="5")
+        search_label = ttk.Label(search_frame, text="Search:")
+        search_entry = ttk.Entry(
+            search_frame, textvariable=self.search_var, width=30)
+        search_entry.bind("<KeyRelease>", self.search_files)
 
         # Create treeview for file list
-        self.tree_frame = ttk.Frame(self.files_frame, padding="5")
-        self.tree = ttk.Treeview(self.tree_frame, columns=(
+        tree_frame = ttk.Frame(files_frame, padding="5")
+        self.tree = ttk.Treeview(tree_frame, columns=(
             "Category", "Type", "Size"), show="headings")
         self.tree.heading("Category", text="Category")
         self.tree.heading("Type", text="Type")
@@ -310,9 +312,9 @@ class DocumentOrganizerApp:
         self.tree.column("Size", width=100)
 
         # Add scrollbars to treeview
-        self.tree_yscroll = ttk.Scrollbar(
-            self.tree_frame, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=self.tree_yscroll.set)
+        tree_yscroll = ttk.Scrollbar(
+            tree_frame, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=tree_yscroll.set)
 
         # Bind treeview selection
         self.tree.bind("<<TreeviewSelect>>", self.show_file_details)

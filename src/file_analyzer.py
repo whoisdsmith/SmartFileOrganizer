@@ -10,13 +10,18 @@ import threading
 import queue
 import json
 import uuid
-from typing import Dict, List, Tuple, Optional, Union, Callable
+from typing import Dict, List, Tuple, Optional, Union, Callable, Any
+import mimetypes
+from datetime import datetime
+from PIL import Image
+import PyPDF2
 
 from .file_parser import FileParser
 from .ai_analyzer import AIAnalyzer
 from .image_analyzer import ImageAnalyzer
 from .media_analyzer import MediaAnalyzer
 from .transcription_service import TranscriptionService
+from .ocr_service import OCRService
 
 logger = logging.getLogger("AIDocumentOrganizer")
 
@@ -26,12 +31,15 @@ class FileAnalyzer:
     Class responsible for analyzing files in a directory
     """
 
-    def __init__(self):
+    def __init__(self, config: Optional[Dict] = None):
+        self.config = config or {}
+        self.logger = logging.getLogger(__name__)
         self.parser = FileParser()
         self.ai_analyzer = AIAnalyzer()
         self.image_analyzer = ImageAnalyzer()
         self.media_analyzer = MediaAnalyzer()
         self.transcription_service = TranscriptionService()
+        self.ocr_service = OCRService(self.config.get('ocr_config', {}))
 
         # Supported file extensions
         self.supported_extensions = {
@@ -226,7 +234,7 @@ class FileAnalyzer:
 
                 # Update job state
                 self.job_states[job_id]['pending_files'] = all_files[i +
-                                                                    self.default_batch_size:]
+                                                                     self.default_batch_size:]
                 self.job_states[job_id]['processed_files'] = results
 
                 # Update progress
@@ -425,60 +433,73 @@ class FileAnalyzer:
             file_info = self._get_file_info(file_path, file_ext)
 
             # Extract text content
-            file_info['content'] = self.parser.extract_text(file_path, file_ext)
+            file_info['content'] = self.parser.extract_text(
+                file_path, file_ext)
 
             # Extract metadata
-            file_info['metadata'] = self.parser.extract_metadata(file_path, file_ext)
+            file_info['metadata'] = self.parser.extract_metadata(
+                file_path, file_ext)
 
             # Process image files with image analyzer
             if file_ext.lower() in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp']:
                 try:
-                    image_analysis = self.image_analyzer.analyze_image(file_path)
+                    image_analysis = self.image_analyzer.analyze_image(
+                        file_path)
                     file_info['image_analysis'] = image_analysis
                 except Exception as e:
-                    logger.error(f"Error in image analysis for {file_path}: {str(e)}")
+                    logger.error(
+                        f"Error in image analysis for {file_path}: {str(e)}")
                     file_info['image_analysis_error'] = str(e)
 
             # Process audio files with media analyzer
             elif file_ext.lower() in ['.mp3', '.wav', '.flac', '.aac', '.ogg', '.m4a']:
                 try:
-                    audio_analysis = self.media_analyzer.analyze_audio(file_path)
+                    audio_analysis = self.media_analyzer.analyze_audio(
+                        file_path)
                     file_info['audio_analysis'] = audio_analysis
 
                     # Generate audio waveform
-                    waveform_path = self.media_analyzer.generate_audio_waveform(file_path)
+                    waveform_path = self.media_analyzer.generate_audio_waveform(
+                        file_path)
                     if waveform_path:
                         file_info['audio_waveform'] = waveform_path
 
                     # Transcribe audio if enabled
                     # This could be controlled by a setting
-                    transcription = self.transcription_service.transcribe(file_path)
+                    transcription = self.transcription_service.transcribe(
+                        file_path)
                     if 'text' in transcription and transcription['text']:
                         file_info['transcription'] = transcription
                 except Exception as e:
-                    logger.error(f"Error in audio analysis for {file_path}: {str(e)}")
+                    logger.error(
+                        f"Error in audio analysis for {file_path}: {str(e)}")
                     file_info['audio_analysis_error'] = str(e)
 
             # Process video files with media analyzer
             elif file_ext.lower() in ['.mp4', '.avi', '.mkv', '.mov', '.wmv', '.webm', '.flv']:
                 try:
-                    video_analysis = self.media_analyzer.analyze_video(file_path)
+                    video_analysis = self.media_analyzer.analyze_video(
+                        file_path)
                     file_info['video_analysis'] = video_analysis
 
                     # Generate video thumbnail
-                    thumbnail_path = self.media_analyzer.generate_video_thumbnail(file_path)
+                    thumbnail_path = self.media_analyzer.generate_video_thumbnail(
+                        file_path)
                     if thumbnail_path:
                         file_info['video_thumbnail'] = thumbnail_path
 
                     # Extract audio for transcription if enabled
                     # This could be controlled by a setting
-                    audio_path = self.media_analyzer.extract_audio_from_video(file_path)
+                    audio_path = self.media_analyzer.extract_audio_from_video(
+                        file_path)
                     if audio_path:
-                        transcription = self.transcription_service.transcribe(audio_path)
+                        transcription = self.transcription_service.transcribe(
+                            audio_path)
                         if 'text' in transcription and transcription['text']:
                             file_info['transcription'] = transcription
                 except Exception as e:
-                    logger.error(f"Error in video analysis for {file_path}: {str(e)}")
+                    logger.error(
+                        f"Error in video analysis for {file_path}: {str(e)}")
                     file_info['video_analysis_error'] = str(e)
 
             # Process with AI analyzer if content is available
@@ -492,7 +513,8 @@ class FileAnalyzer:
                     )
                     file_info['ai_analysis'] = ai_analysis
                 except Exception as e:
-                    logger.error(f"Error in AI analysis for {file_path}: {str(e)}")
+                    logger.error(
+                        f"Error in AI analysis for {file_path}: {str(e)}")
                     file_info['ai_analysis_error'] = str(e)
 
             # If we have transcription, also analyze it with AI
@@ -507,8 +529,14 @@ class FileAnalyzer:
                     )
                     file_info['transcription_analysis'] = transcription_analysis
                 except Exception as e:
-                    logger.error(f"Error in transcription analysis for {file_path}: {str(e)}")
+                    logger.error(
+                        f"Error in transcription analysis for {file_path}: {str(e)}")
                     file_info['transcription_analysis_error'] = str(e)
+
+            # Add OCR analysis for supported file types
+            if file_ext.lower() in ['.pdf', '.png', '.jpg', '.jpeg', '.tiff', '.bmp']:
+                ocr_info = self._perform_ocr_analysis(file_path)
+                file_info['ocr_data'] = ocr_info
 
             return file_info
 
@@ -714,6 +742,53 @@ class FileAnalyzer:
         except Exception as e:
             logger.error(f"Error loading job state: {str(e)}")
             return False
+
+    def _perform_ocr_analysis(self, file_path: str) -> Dict[str, Any]:
+        """
+        Perform OCR analysis on supported file types.
+        Returns OCR results including text content and confidence scores.
+        """
+        try:
+            file_ext = os.path.splitext(file_path)[1].lower()
+
+            if file_ext == '.pdf':
+                # Process PDF file
+                results = self.ocr_service.process_pdf(file_path)
+
+                # Aggregate results
+                total_confidence = sum(r['confidence'] for r in results)
+                avg_confidence = total_confidence / \
+                    len(results) if results else 0
+
+                return {
+                    'success': True,
+                    'type': 'pdf',
+                    'pages': len(results),
+                    'average_confidence': avg_confidence,
+                    'languages': list(set(r['language'] for r in results)),
+                    'page_results': results
+                }
+
+            else:
+                # Process image file
+                image = Image.open(file_path)
+                result = self.ocr_service.process_image(image)
+
+                return {
+                    'success': True,
+                    'type': 'image',
+                    'confidence': result['confidence'],
+                    'language': result['language'],
+                    'engine': result['engine'],
+                    'text': result['text']
+                }
+
+        except Exception as e:
+            self.logger.error(f"OCR analysis failed for {file_path}: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
 
 
 class ResourceMonitor:

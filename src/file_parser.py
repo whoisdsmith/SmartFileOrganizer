@@ -8,6 +8,9 @@ from PIL import Image
 from PIL.ExifTags import TAGS, GPSTAGS
 import io
 import datetime
+from typing import Dict, Optional, Tuple
+
+from .ocr_service import OCRService
 
 # Import media handling libraries
 try:
@@ -22,6 +25,11 @@ class FileParser:
     """
     Class for parsing different file types and extracting text content
     """
+
+    def __init__(self, config: Optional[Dict] = None):
+        """Initialize FileParser with optional configuration."""
+        self.config = config or {}
+        self.ocr_service = OCRService(config.get('ocr_config', {}))
 
     def extract_text(self, file_path, file_ext):
         """
@@ -228,48 +236,57 @@ class FileParser:
         except Exception as e:
             return f"Error parsing Word document: {str(e)}"
 
-    def _parse_pdf(self, file_path):
+    def _parse_pdf(self, file_path: str) -> Tuple[str, Dict]:
         """
-        Parse PDF file and extract text content
+        Parse PDF file and extract text content.
+        For image-based PDFs, OCR is used to extract text.
 
         Args:
             file_path: Path to the PDF file
 
         Returns:
-            Extracted text content as a string
+            Tuple of (extracted text, metadata)
         """
+        text = ""
+        metadata = {}
+
         try:
-            text_content = ""
             with open(file_path, 'rb') as file:
-                reader = PyPDF2.PdfReader(file)
+                pdf_reader = PyPDF2.PdfReader(file)
+                metadata = {
+                    'pages': len(pdf_reader.pages),
+                    'is_encrypted': pdf_reader.is_encrypted,
+                    'version': pdf_reader.pdf_version
+                }
 
-                # Check if PDF is encrypted
-                if reader.is_encrypted:
-                    try:
-                        # Try with empty password first
-                        reader.decrypt('')
-                    except:
-                        return "Error: This PDF is password-protected and cannot be read."
+                # Try to extract text directly first
+                for page in pdf_reader.pages:
+                    page_text = page.extract_text()
 
-                # Extract text from each page
-                for page_num in range(len(reader.pages)):
-                    page = reader.pages[page_num]
-                    try:
-                        page_text = page.extract_text()
-                        if page_text:
-                            text_content += f"--- Page {page_num + 1} ---\n{page_text}\n\n"
-                        else:
-                            text_content += f"--- Page {page_num + 1} ---\n[No extractable text on this page - may contain images only]\n\n"
-                    except Exception as e:
-                        text_content += f"--- Page {page_num + 1} ---\n[Error extracting text: {str(e)}]\n\n"
+                    # If page has no extractable text, it might be image-based
+                    if not page_text.strip():
+                        # Get the OCR results for this page
+                        ocr_results = self.ocr_service.process_pdf(file_path)
 
-            if not text_content.strip():
-                return "This PDF does not contain extractable text. It may be scanned or image-based."
+                        # Combine OCR results
+                        for result in ocr_results:
+                            if result['confidence'] > self.config.get('ocr_confidence_threshold', 50):
+                                text += result['text'] + "\n"
 
-            return text_content.strip()
+                        # Add OCR metadata
+                        metadata['ocr_used'] = True
+                        metadata['ocr_confidence'] = sum(
+                            r['confidence'] for r in ocr_results) / len(ocr_results)
+                        metadata['ocr_languages'] = list(
+                            set(r['language'] for r in ocr_results))
+                    else:
+                        text += page_text + "\n"
+
         except Exception as e:
-            # Handle potential errors (corrupted PDF, password-protected, etc.)
-            return f"Error extracting text from PDF: {str(e)}"
+            print(f"Error parsing PDF {file_path}: {str(e)}")
+            return "", {}
+
+        return text.strip(), metadata
 
     def _parse_image(self, file_path):
         """
@@ -335,7 +352,8 @@ class FileParser:
             # Add ID3 tags if available
             for tag_name, tag_value in metadata.items():
                 if tag_name.startswith('id3_'):
-                    text_parts.append(f"{tag_name.replace('id3_', '')}: {tag_value}")
+                    text_parts.append(
+                        f"{tag_name.replace('id3_', '')}: {tag_value}")
 
             return "\n".join(text_parts)
 
@@ -531,24 +549,28 @@ class FileParser:
                             if tag == 'GPSInfo':
                                 gps_data = {}
                                 for gps_tag_id, gps_value in value.items():
-                                    gps_tag = GPSTAGS.get(gps_tag_id, gps_tag_id)
+                                    gps_tag = GPSTAGS.get(
+                                        gps_tag_id, gps_tag_id)
                                     gps_data[gps_tag] = gps_value
 
                                 # Calculate latitude and longitude if available
                                 if 'GPSLatitude' in gps_data and 'GPSLatitudeRef' in gps_data:
-                                    lat = self._convert_to_degrees(gps_data['GPSLatitude'])
+                                    lat = self._convert_to_degrees(
+                                        gps_data['GPSLatitude'])
                                     if gps_data['GPSLatitudeRef'] == 'S':
                                         lat = -lat
                                     metadata['gps_latitude'] = lat
 
                                 if 'GPSLongitude' in gps_data and 'GPSLongitudeRef' in gps_data:
-                                    lon = self._convert_to_degrees(gps_data['GPSLongitude'])
+                                    lon = self._convert_to_degrees(
+                                        gps_data['GPSLongitude'])
                                     if gps_data['GPSLongitudeRef'] == 'W':
                                         lon = -lon
                                     metadata['gps_longitude'] = lon
 
                                 if 'GPSAltitude' in gps_data:
-                                    metadata['gps_altitude'] = float(gps_data['GPSAltitude'])
+                                    metadata['gps_altitude'] = float(
+                                        gps_data['GPSAltitude'])
 
                                 metadata['gps_data'] = gps_data
                             elif tag == 'DateTime':

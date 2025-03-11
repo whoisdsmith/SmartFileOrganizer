@@ -126,3 +126,7 @@ test_output/
 *.tmp
 
 packaging/
+
+# OCR cache
+src/cache/ocr/
+*.ocr.json

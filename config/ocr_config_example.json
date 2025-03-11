@@ -1,0 +1,34 @@
+{
+    "ocr_config": {
+        "enabled": true,
+        "default_engine": "auto",
+        "tesseract_path": "tesseract",
+        "confidence_threshold": 60.0,
+        "default_language": "eng",
+        "additional_languages": ["deu", "fra", "spa"],
+        "image_preprocessing": {
+            "enabled": true,
+            "deskew": true,
+            "denoise": true,
+            "contrast_enhancement": true
+        },
+        "pdf_handling": {
+            "force_ocr": false,
+            "max_pages": 100,
+            "dpi": 300,
+            "batch_size": 10
+        },
+        "cache": {
+            "enabled": true,
+            "max_size_mb": 1000,
+            "expiration_days": 30
+        }
+    },
+    "logging": {
+        "log_levels": {
+            "ocr": "INFO",
+            "file_parser": "INFO",
+            "file_analyzer": "INFO"
+        }
+    }
+}

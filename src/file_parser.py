@@ -1,16 +1,55 @@
 import os
-import pandas as pd
-from bs4 import BeautifulSoup
-import docx
-import chardet
-import PyPDF2
-from PIL import Image
-from PIL.ExifTags import TAGS, GPSTAGS
 import io
 import datetime
-from typing import Dict, Optional, Tuple
+import logging
+from typing import Dict, Optional, Tuple, Any, List
 
-from .ocr_service import OCRService
+# Configure logging
+logger = logging.getLogger(__name__)
+
+# Handle imports with graceful fallbacks
+try:
+    import pandas as pd
+    PANDAS_AVAILABLE = True
+except ImportError:
+    logger.warning("pandas not available - CSV and Excel parsing will be limited")
+    PANDAS_AVAILABLE = False
+
+try:
+    from bs4 import BeautifulSoup
+    BS4_AVAILABLE = True
+except ImportError:
+    logger.warning("BeautifulSoup not available - HTML parsing will be limited")
+    BS4_AVAILABLE = False
+
+try:
+    import docx
+    DOCX_AVAILABLE = True
+except ImportError:
+    logger.warning("python-docx not available - DOCX parsing will be limited")
+    DOCX_AVAILABLE = False
+
+try:
+    import chardet
+    CHARDET_AVAILABLE = True
+except ImportError:
+    logger.warning("chardet not available - character encoding detection will be limited")
+    CHARDET_AVAILABLE = False
+
+try:
+    import PyPDF2
+    PYPDF2_AVAILABLE = True
+except ImportError:
+    logger.warning("PyPDF2 not available - PDF parsing will be limited")
+    PYPDF2_AVAILABLE = False
+
+try:
+    from PIL import Image
+    from PIL.ExifTags import TAGS, GPSTAGS
+    PIL_AVAILABLE = True
+except ImportError:
+    logger.warning("Pillow not available - image processing will be limited")
+    PIL_AVAILABLE = False
 
 # Import media handling libraries
 try:
@@ -18,7 +57,11 @@ try:
     import ffmpeg
     MEDIA_SUPPORT = True
 except ImportError:
+    logger.warning("Media libraries not available - audio/video processing will be limited")
     MEDIA_SUPPORT = False
+
+# Import OCR service
+from .ocr_service import OCRService
 
 
 class FileParser:
@@ -114,11 +157,19 @@ class FileParser:
     def _parse_csv(self, file_path):
         """Parse CSV file content"""
         try:
+            # Check if required libraries are available
+            if not PANDAS_AVAILABLE:
+                # Fallback to simple reading if pandas is not available
+                logger.info("Using fallback for CSV parsing because pandas is not available")
+                return self._parse_text(file_path)
+            
             # Try to detect encoding
-            with open(file_path, 'rb') as f:
-                result = chardet.detect(f.read(10000))
-                encoding = result['encoding']
-
+            encoding = 'utf-8'  # Default encoding
+            if CHARDET_AVAILABLE:
+                with open(file_path, 'rb') as f:
+                    result = chardet.detect(f.read(10000))
+                    encoding = result['encoding']
+            
             # Read CSV file with pandas
             df = pd.read_csv(file_path, encoding=encoding)
 
@@ -131,12 +182,18 @@ class FileParser:
 
             return text
         except Exception as e:
+            logger.warning(f"Error parsing CSV file: {str(e)}")
             # Fallback to simple reading
             return self._parse_text(file_path)
 
     def _parse_excel(self, file_path):
         """Parse Excel file content"""
         try:
+            # Check if pandas is available
+            if not PANDAS_AVAILABLE:
+                logger.info("Using fallback for Excel parsing because pandas is not available")
+                return "[Excel parsing requires pandas library which is not available]"
+            
             # Get sheet names
             excel_file = pd.ExcelFile(file_path)
             sheet_names = excel_file.sheet_names
@@ -162,18 +219,26 @@ class FileParser:
 
             return text
         except Exception as e:
+            logger.warning(f"Error parsing Excel file: {str(e)}")
             return f"Error parsing Excel file: {str(e)}"
 
     def _parse_html(self, file_path):
         """Parse HTML file content"""
         try:
+            # Check if BeautifulSoup is available
+            if not BS4_AVAILABLE:
+                logger.info("Using fallback for HTML parsing because BeautifulSoup is not available")
+                return self._parse_text(file_path)
+            
             # Detect encoding
-            with open(file_path, 'rb') as f:
-                result = chardet.detect(f.read(10000))
-                encoding = result['encoding']
-
+            encoding = 'utf-8'  # Default encoding
+            if CHARDET_AVAILABLE:
+                with open(file_path, 'rb') as f:
+                    result = chardet.detect(f.read(10000))
+                    encoding = result['encoding']
+            
             # Read HTML file
-            with open(file_path, 'r', encoding=encoding) as f:
+            with open(file_path, 'r', encoding=encoding, errors='replace') as f:
                 html_content = f.read()
 
             # Parse HTML and extract text
@@ -192,6 +257,7 @@ class FileParser:
 
             return text
         except Exception as e:
+            logger.warning(f"Error parsing HTML file: {str(e)}")
             # Fallback to simple reading
             return self._parse_text(file_path)
 
@@ -203,19 +269,27 @@ class FileParser:
         """Parse plain text file content"""
         try:
             # Detect encoding
-            with open(file_path, 'rb') as f:
-                result = chardet.detect(f.read(10000))
-                encoding = result['encoding'] or 'utf-8'
+            encoding = 'utf-8'  # Default encoding
+            if CHARDET_AVAILABLE:
+                with open(file_path, 'rb') as f:
+                    result = chardet.detect(f.read(10000))
+                    encoding = result['encoding'] or 'utf-8'
 
             # Read text file
             with open(file_path, 'r', encoding=encoding, errors='replace') as f:
                 return f.read()
         except Exception as e:
+            logger.warning(f"Error parsing text file: {str(e)}")
             return f"Error parsing text file: {str(e)}"
 
     def _parse_docx(self, file_path):
         """Parse Word document content"""
         try:
+            # Check if python-docx is available
+            if not DOCX_AVAILABLE:
+                logger.info("Using fallback for DOCX parsing because python-docx is not available")
+                return "[DOCX parsing requires python-docx library which is not available]"
+            
             # Open the document
             doc = docx.Document(file_path)
 
@@ -234,6 +308,7 @@ class FileParser:
 
             return '\n'.join(full_text)
         except Exception as e:
+            logger.warning(f"Error parsing Word document: {str(e)}")
             return f"Error parsing Word document: {str(e)}"
 
     def _parse_pdf(self, file_path: str) -> Tuple[str, Dict]:
@@ -250,6 +325,11 @@ class FileParser:
         text = ""
         metadata = {}
 
+        # Check if PyPDF2 is available
+        if not PYPDF2_AVAILABLE:
+            logger.info("Using fallback for PDF parsing because PyPDF2 is not available")
+            return "[PDF parsing requires PyPDF2 library which is not available]", {"error": "PyPDF2 not available"}
+        
         try:
             with open(file_path, 'rb') as file:
                 pdf_reader = PyPDF2.PdfReader(file)
@@ -275,18 +355,95 @@ class FileParser:
 
                         # Add OCR metadata
                         metadata['ocr_used'] = True
-                        metadata['ocr_confidence'] = sum(
-                            r['confidence'] for r in ocr_results) / len(ocr_results)
-                        metadata['ocr_languages'] = list(
-                            set(r['language'] for r in ocr_results))
+                        if ocr_results:  # Check if there are any OCR results
+                            metadata['ocr_confidence'] = sum(
+                                r['confidence'] for r in ocr_results) / len(ocr_results)
+                            metadata['ocr_languages'] = list(
+                                set(r['language'] for r in ocr_results))
                     else:
                         text += page_text + "\n"
 
         except Exception as e:
-            print(f"Error parsing PDF {file_path}: {str(e)}")
+            logger.warning(f"Error parsing PDF {file_path}: {str(e)}")
             return "", {}
 
         return text.strip(), metadata
+        
+    def _extract_pdf_metadata(self, file_path: str) -> Dict[str, Any]:
+        """
+        Extract metadata from a PDF file
+        
+        Args:
+            file_path: Path to the PDF file
+            
+        Returns:
+            Dictionary containing PDF metadata
+        """
+        if not PYPDF2_AVAILABLE:
+            return {"error": "PDF metadata extraction requires PyPDF2 library."}
+            
+        try:
+            with open(file_path, 'rb') as file:
+                pdf_reader = PyPDF2.PdfReader(file)
+                
+                # Basic PDF info
+                metadata = {
+                    'pages': len(pdf_reader.pages),
+                    'is_encrypted': pdf_reader.is_encrypted,
+                    'pdf_version': pdf_reader.pdf_version
+                }
+                
+                # Document information if available
+                if pdf_reader.metadata:
+                    for key, value in pdf_reader.metadata.items():
+                        # Clean up the key name (remove leading /)
+                        clean_key = key
+                        if isinstance(key, str) and key.startswith('/'):
+                            clean_key = key[1:]
+                        metadata[f"pdf_{clean_key}"] = value
+                
+                return metadata
+        except Exception as e:
+            return {"error": f"Error extracting PDF metadata: {str(e)}"}
+            
+    def _extract_docx_metadata(self, file_path: str) -> Dict[str, Any]:
+        """
+        Extract metadata from a DOCX file
+        
+        Args:
+            file_path: Path to the DOCX file
+            
+        Returns:
+            Dictionary containing DOCX metadata
+        """
+        if not DOCX_AVAILABLE:
+            return {"error": "DOCX metadata extraction requires python-docx library."}
+            
+        try:
+            doc = docx.Document(file_path)
+            
+            # Basic document properties
+            properties = doc.core_properties
+            
+            metadata = {
+                'docx_title': properties.title,
+                'docx_author': properties.author,
+                'docx_created': properties.created.isoformat() if properties.created else None,
+                'docx_modified': properties.modified.isoformat() if properties.modified else None,
+                'docx_last_modified_by': properties.last_modified_by,
+                'docx_revision': properties.revision,
+                'docx_category': properties.category,
+                'docx_comments': properties.comments,
+                'docx_keywords': properties.keywords,
+                'docx_subject': properties.subject,
+                'docx_paragraph_count': len(doc.paragraphs),
+                'docx_table_count': len(doc.tables)
+            }
+            
+            # Remove None values
+            return {k: v for k, v in metadata.items() if v is not None}
+        except Exception as e:
+            return {"error": f"Error extracting DOCX metadata: {str(e)}"}
 
     def _parse_image(self, file_path):
         """
@@ -298,6 +455,11 @@ class FileParser:
         Returns:
             String with basic image information (no OCR yet)
         """
+        # Check if PIL is available
+        if not PIL_AVAILABLE:
+            logger.info("Using fallback for image parsing because PIL is not available")
+            return "[Image parsing requires PIL/Pillow library which is not available]"
+            
         try:
             with Image.open(file_path) as img:
                 # Basic image information
@@ -321,6 +483,7 @@ class FileParser:
 
                 return text
         except Exception as e:
+            logger.warning(f"Error parsing image: {str(e)}")
             return f"Error parsing image: {str(e)}"
 
     def _parse_audio(self, file_path):
@@ -529,6 +692,10 @@ class FileParser:
             Dictionary with image metadata
         """
         metadata = {}
+        
+        # Check if PIL is available
+        if not PIL_AVAILABLE:
+            return {"error": "Image metadata extraction requires PIL/Pillow library."}
 
         try:
             with Image.open(file_path) as img:
@@ -604,6 +771,7 @@ class FileParser:
                                         value = str(value)
                                 metadata[f'exif_{tag.lower()}'] = value
         except Exception as e:
+            logger.warning(f"Error extracting image metadata: {str(e)}")
             metadata['exif_error'] = str(e)
 
         return metadata

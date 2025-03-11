@@ -244,6 +244,13 @@ class DocumentOrganizerApp:
         # Middle frame with notebook
         self.middle_frame = ttk.Frame(self.main_frame, padding="5")
         self.middle_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        # Bottom frame
+        self.bottom_frame = ttk.Frame(self.main_frame, padding="5")
+        self.bottom_frame.pack(fill=tk.X, pady=5)
+        
+        # Create the status frame in the bottom frame - this is the only status frame in the app
+        self.status_frame = ttk.LabelFrame(self.bottom_frame, text="Status", padding="5")
 
         # Directory frame
         self.dir_frame = ttk.LabelFrame(
@@ -292,9 +299,8 @@ class DocumentOrganizerApp:
         self.cancel_button = ttk.Button(
             self.options_frame, text="Cancel", command=self.cancel_operation)
 
-        # Create status frame
-        self.status_frame = ttk.LabelFrame(
-            self.top_frame, text="Status", padding="5")
+        # Status frame created elsewhere
+        # Removed duplicate frame creation
 
         # Status label
         self.status_label = ttk.Label(self.status_frame, text="Ready")
@@ -865,8 +871,8 @@ class DocumentOrganizerApp:
         self.tagged_files_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.tagged_files_yscroll.pack(side=tk.RIGHT, fill=tk.Y)
 
-        # Status frame in bottom frame
-        self.status_frame.pack(fill=tk.X, expand=True, in_=self.bottom_frame)
+        # Status frame already created, just ensure it's in the bottom frame
+        # We'll set layout properties here but create the frame elsewhere to avoid duplicates
 
         # Status label
         self.status_label.grid(row=0, column=0, sticky=tk.W, padx=5, pady=2)

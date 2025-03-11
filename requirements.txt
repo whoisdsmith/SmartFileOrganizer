@@ -85,3 +85,10 @@ moviepy
 pydub
 pyyaml
 pillow
+chardet
+ffmpeg-python
+pandas
+Pillow
+pydub
+PyPDF2
+python-docx

@@ -10,9 +10,20 @@ from typing import Dict, List, Optional, Tuple, Any
 import hashlib
 from pathlib import Path
 import json
-from PIL import Image
 from collections import defaultdict
 import mimetypes
+from datetime import datetime
+
+# Configure logging
+logger = logging.getLogger(__name__)
+
+# Handle imports with graceful fallbacks
+try:
+    from PIL import Image
+    PIL_AVAILABLE = True
+except ImportError:
+    logger.warning("Pillow not available - image processing for duplicates will be limited")
+    PIL_AVAILABLE = False
 
 # Mock implementation - no external dependencies
 from .ocr_service import OCRService
@@ -171,6 +182,12 @@ class DuplicateDetector:
 
     def _find_image_duplicates(self, files: List[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
         """Find duplicate images using perceptual hashing (mock implementation)."""
+        # Check if PIL is available
+        if not PIL_AVAILABLE:
+            logger.warning("Cannot perform advanced image duplicate detection - Pillow not available")
+            # Fall back to simple binary comparison
+            return self._find_binary_duplicates(files)
+            
         self.logger.info("Using mock image duplicate detection")
         try:
             # For mock purposes, just use a simple hash of the filename
@@ -426,6 +443,292 @@ class DuplicateDetector:
             'application/x-python',
             'application/x-yaml'
         ]
+
+    def check_duplicates(self, file_path: str, existing_files: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Check if a file is a duplicate of any of the existing files.
+
+        Args:
+            file_path: Path to the file to check
+            existing_files: List of existing file dictionaries
+
+        Returns:
+            Dictionary with duplicate information:
+            {
+                'is_duplicate': bool,
+                'duplicate_files': List of dictionaries with information about duplicate files,
+                'similarity_score': float (0-1),
+                'duplicate_type': str ('exact', 'similar', 'none')
+            }
+        """
+        try:
+            if not os.path.exists(file_path):
+                return {
+                    'is_duplicate': False,
+                    'duplicate_files': [],
+                    'similarity_score': 0.0,
+                    'duplicate_type': 'none',
+                    'error': 'File not found'
+                }
+
+            # Get file size and MIME type
+            file_size = os.path.getsize(file_path)
+            file_ext = os.path.splitext(file_path)[1].lower()
+            # Simple MIME type mapping
+            mime_mapping = {
+                '.jpg': 'image/jpeg',
+                '.jpeg': 'image/jpeg',
+                '.png': 'image/png',
+                '.gif': 'image/gif',
+                '.bmp': 'image/bmp',
+                '.txt': 'text/plain',
+                '.html': 'text/html',
+                '.htm': 'text/html',
+                '.pdf': 'application/pdf',
+                '.doc': 'application/msword',
+                '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                '.xls': 'application/vnd.ms-excel',
+                '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                '.csv': 'text/csv',
+                '.json': 'application/json',
+                '.xml': 'application/xml',
+                '.mp3': 'audio/mpeg',
+                '.mp4': 'video/mp4',
+                '.avi': 'video/x-msvideo',
+                '.py': 'application/x-python'
+            }
+            file_type = mime_mapping.get(file_ext, 'application/octet-stream')
+            
+            # Filter existing files by size first (quick filter)
+            size_matches = [f for f in existing_files if os.path.getsize(f['file_path']) == file_size]
+            
+            if not size_matches:
+                return {
+                    'is_duplicate': False,
+                    'duplicate_files': [],
+                    'similarity_score': 0.0,
+                    'duplicate_type': 'none'
+                }
+            
+            # Create file info object for the target file
+            file_info = {
+                'file_path': file_path,
+                'file_name': os.path.basename(file_path),
+                'file_size': file_size,
+                'file_type': file_type
+            }
+            
+            # Check for exact duplicates using hash
+            with open(file_path, 'rb') as f:
+                content = f.read()
+                if len(content) > self.settings['max_content_size']:
+                    content = content[:self.settings['max_content_size']]
+                content_hash = hashlib.md5(content).hexdigest()
+            
+            exact_duplicates = []
+            for match in size_matches:
+                try:
+                    with open(match['file_path'], 'rb') as f:
+                        match_content = f.read()
+                        if len(match_content) > self.settings['max_content_size']:
+                            match_content = match_content[:self.settings['max_content_size']]
+                        match_hash = hashlib.md5(match_content).hexdigest()
+                        
+                        if match_hash == content_hash:
+                            exact_duplicates.append(match)
+                except Exception as e:
+                    self.logger.warning(f"Error reading file {match['file_path']}: {e}")
+                    continue
+            
+            if exact_duplicates:
+                return {
+                    'is_duplicate': True,
+                    'duplicate_files': exact_duplicates,
+                    'similarity_score': 1.0,
+                    'duplicate_type': 'exact'
+                }
+            
+            # If no exact duplicates, check for similar content
+            # This is a mock implementation for testing
+            similar_duplicates = []
+            similarity_score = 0.0
+            
+            # Mock similarity check based on file type
+            if self._is_image_type(file_type):
+                # Mock implementation for images
+                self.logger.info("Using mock image similarity detection")
+                for match in size_matches:
+                    if match['file_type'].startswith('image/'):
+                        # Simple mock calculation
+                        name_similarity = len(set(file_info['file_name']) & set(match['file_name'])) / \
+                                         max(len(file_info['file_name']), len(match['file_name']))
+                        if name_similarity > self.settings['image_similarity_threshold']:
+                            similar_duplicates.append(match)
+                            similarity_score = max(similarity_score, name_similarity)
+            
+            elif self._is_text_type(file_type):
+                # Mock implementation for text files
+                self.logger.info("Using mock text similarity detection")
+                # For testing, just use a simple hash of the filename
+                for match in size_matches:
+                    if self._is_text_type(match['file_type']):
+                        # Simple mock calculation
+                        name_similarity = len(set(file_info['file_name']) & set(match['file_name'])) / \
+                                         max(len(file_info['file_name']), len(match['file_name']))
+                        if name_similarity > self.settings['content_similarity_threshold']:
+                            similar_duplicates.append(match)
+                            similarity_score = max(similarity_score, name_similarity)
+            
+            if similar_duplicates:
+                return {
+                    'is_duplicate': True,
+                    'duplicate_files': similar_duplicates,
+                    'similarity_score': similarity_score,
+                    'duplicate_type': 'similar'
+                }
+            
+            return {
+                'is_duplicate': False,
+                'duplicate_files': [],
+                'similarity_score': 0.0,
+                'duplicate_type': 'none'
+            }
+        
+        except Exception as e:
+            self.logger.error(f"Error checking for duplicates: {e}")
+            return {
+                'is_duplicate': False,
+                'duplicate_files': [],
+                'similarity_score': 0.0,
+                'duplicate_type': 'none',
+                'error': str(e)
+            }
+
+    def handle_duplicates(self, duplicate_groups: List[List[Dict[str, Any]]], 
+                         action: str = 'report', 
+                         target_dir: Optional[str] = None,
+                         keep_strategy: str = 'newest') -> Dict[str, Any]:
+        """
+        Handle duplicate files according to the specified action.
+
+        Args:
+            duplicate_groups: List of duplicate file groups
+            action: Action to take ('report', 'move', 'delete')
+            target_dir: Target directory for moving duplicates (required for 'move' action)
+            keep_strategy: Strategy for keeping files ('newest', 'oldest', 'largest', 'smallest')
+
+        Returns:
+            Dictionary with handling results
+        """
+        try:
+            if not duplicate_groups:
+                return {
+                    'success': True,
+                    'action': action,
+                    'files_affected': 0,
+                    'message': 'No duplicates to handle'
+                }
+            
+            if action == 'move' and (not target_dir or not os.path.isdir(target_dir)):
+                return {
+                    'success': False,
+                    'action': action,
+                    'files_affected': 0,
+                    'error': 'Target directory is required and must exist for move action'
+                }
+            
+            files_affected = 0
+            results = []
+            
+            for group in duplicate_groups:
+                if len(group) <= 1:
+                    continue
+                
+                # Determine which file to keep based on strategy
+                if keep_strategy == 'newest':
+                    group.sort(key=lambda x: os.path.getmtime(x['file_path']), reverse=True)
+                elif keep_strategy == 'oldest':
+                    group.sort(key=lambda x: os.path.getmtime(x['file_path']))
+                elif keep_strategy == 'largest':
+                    group.sort(key=lambda x: os.path.getsize(x['file_path']), reverse=True)
+                elif keep_strategy == 'smallest':
+                    group.sort(key=lambda x: os.path.getsize(x['file_path']))
+                
+                # Keep the first file, process the rest
+                keep_file = group[0]
+                duplicates = group[1:]
+                
+                for dup in duplicates:
+                    try:
+                        if action == 'report':
+                            # Just report the duplicate
+                            results.append({
+                                'file': dup['file_path'],
+                                'keep_file': keep_file['file_path'],
+                                'action': 'reported'
+                            })
+                        
+                        elif action == 'move':
+                            # Move the duplicate to target directory
+                            filename = os.path.basename(dup['file_path'])
+                            
+                            # Ensure target directory is not None
+                            if target_dir is None:
+                                self.logger.error("Target directory is required for 'move' action")
+                                continue
+                                
+                            target_path = os.path.join(str(target_dir), filename)
+                            
+                            # Handle filename conflicts
+                            if os.path.exists(target_path):
+                                base, ext = os.path.splitext(filename)
+                                target_path = os.path.join(str(target_dir), f"{base}_dup_{files_affected}{ext}")
+                            
+                            import shutil
+                            shutil.move(dup['file_path'], target_path)
+                            
+                            results.append({
+                                'file': dup['file_path'],
+                                'keep_file': keep_file['file_path'],
+                                'action': 'moved',
+                                'target_path': target_path
+                            })
+                        
+                        elif action == 'delete':
+                            # Delete the duplicate
+                            os.remove(dup['file_path'])
+                            
+                            results.append({
+                                'file': dup['file_path'],
+                                'keep_file': keep_file['file_path'],
+                                'action': 'deleted'
+                            })
+                        
+                        files_affected += 1
+                        
+                    except Exception as e:
+                        results.append({
+                            'file': dup['file_path'],
+                            'keep_file': keep_file['file_path'],
+                            'action': 'error',
+                            'error': str(e)
+                        })
+            
+            return {
+                'success': True,
+                'action': action,
+                'files_affected': files_affected,
+                'results': results
+            }
+        
+        except Exception as e:
+            self.logger.error(f"Error handling duplicates: {e}")
+            return {
+                'success': False,
+                'action': action,
+                'files_affected': 0,
+                'error': str(e)
+            }
 
     def clear_cache(self) -> bool:
         """Clear duplicate detection cache."""

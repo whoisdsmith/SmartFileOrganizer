@@ -5,6 +5,10 @@ import time
 from datetime import datetime
 import logging
 from pathlib import Path
+from typing import Dict, List, Optional, Any
+import json
+
+from .vector_search import VectorSearch
 
 logger = logging.getLogger("AIDocumentOrganizer")
 
@@ -14,20 +18,31 @@ class SearchEngine:
     Class for indexing and searching files
     """
 
-    def __init__(self, db_path=None):
+    def __init__(self, config: Optional[Dict] = None):
         """
         Initialize the search engine
 
         Args:
-            db_path: Path to the SQLite database file (default: search_index.db in user's home directory)
+            config: Configuration dictionary
         """
-        if db_path is None:
-            home_dir = os.path.expanduser("~")
-            app_dir = os.path.join(home_dir, ".ai_document_organizer")
-            os.makedirs(app_dir, exist_ok=True)
-            db_path = os.path.join(app_dir, "search_index.db")
+        self.config = config or {}
+        self.logger = logging.getLogger(__name__)
 
-        self.db_path = db_path
+        # Initialize vector search
+        self.vector_search = VectorSearch(self.config.get('vector_search', {}))
+
+        # Search settings
+        self.default_settings = {
+            'use_semantic_search': True,
+            'semantic_weight': 0.6,  # Weight for semantic search vs keyword search
+            'min_similarity': 0.3,   # Minimum similarity score for semantic results
+            'max_results': 100,      # Maximum number of results to return
+            # How to combine semantic and keyword scores
+            'combine_method': 'weighted_average'
+        }
+        self.settings = {**self.default_settings,
+                         **self.config.get('search', {})}
+
         self.progress_callback = None
         self._initialize_database()
 
@@ -105,136 +120,285 @@ class SearchEngine:
             logger.error(f"Error initializing database: {str(e)}")
             raise
 
-    def index_files(self, file_info_list, callback=None):
+    def index_files(self, files: List[Dict[str, Any]], callback=None) -> Dict[str, Any]:
         """
-        Index files in the database
+        Index files for both keyword and semantic search.
 
         Args:
-            file_info_list: List of file information dictionaries
-            callback: Optional callback function for progress updates
+            files: List of file dictionaries with content and metadata
+            callback: Optional progress callback function
 
         Returns:
             Dictionary with indexing results
         """
-        self.progress_callback = callback
+        try:
+            total_files = len(files)
+            if callback:
+                callback(0, total_files, "Starting indexing...")
 
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+            # Index for semantic search
+            if self.settings['use_semantic_search']:
+                if callback:
+                    callback(0, total_files, "Building semantic index...")
+                success = self.vector_search.index_documents(files)
+                if not success:
+                    raise Exception("Failed to build semantic index")
 
-        total_files = len(file_info_list)
-        indexed_count = 0
-        updated_count = 0
-        error_count = 0
+            # Build keyword index
+            if callback:
+                callback(total_files // 2, total_files,
+                         "Building keyword index...")
 
-        for idx, file_info in enumerate(file_info_list):
-            if self.progress_callback:
-                self.progress_callback(
-                    idx + 1, total_files, os.path.basename(file_info['path']))
+            self._build_keyword_index(files)
 
-            try:
-                # Check if file already exists in the database
-                cursor.execute(
-                    'SELECT id, modified_time FROM files WHERE path = ?', (file_info['path'],))
-                result = cursor.fetchone()
+            if callback:
+                callback(total_files, total_files, "Indexing complete")
 
-                file_id = None
-                is_update = False
+            return {
+                'success': True,
+                'indexed_files': total_files,
+                'semantic_index': self.settings['use_semantic_search']
+            }
 
-                if result:
-                    file_id, db_modified_time = result
-                    file_modified_time = file_info.get('modified_time', 0)
+        except Exception as e:
+            self.logger.error(f"Error indexing files: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
 
-                    # Update only if file has been modified
-                    if file_modified_time > db_modified_time:
-                        is_update = True
-                        # Delete existing content and metadata
-                        cursor.execute(
-                            'DELETE FROM content WHERE file_id = ?', (file_id,))
-                        cursor.execute(
-                            'DELETE FROM metadata WHERE file_id = ?', (file_id,))
-                        cursor.execute(
-                            'DELETE FROM tags WHERE file_id = ?', (file_id,))
+    def search(self, query: str, filters: Optional[Dict] = None, top_k: int = 10) -> List[Dict[str, Any]]:
+        """
+        Perform hybrid search combining keyword and semantic search.
 
-                        # Update file information
-                        cursor.execute('''
-                            UPDATE files SET
-                                filename = ?,
-                                size = ?,
-                                modified_time = ?,
-                                indexed_time = ?,
-                                category = ?
-                            WHERE id = ?
-                        ''', (
-                            os.path.basename(file_info['path']),
-                            file_info.get('file_size', 0),
-                            file_info.get('modified_time', 0),
-                            time.time(),
-                            file_info.get('category', ''),
-                            file_id
-                        ))
+        Args:
+            query: Search query text
+            filters: Optional filters for results
+            top_k: Maximum number of results to return
 
-                        updated_count += 1
-                    else:
-                        # Skip files that haven't been modified
-                        continue
+        Returns:
+            List of search results with scores
+        """
+        try:
+            results = []
+
+            # Perform semantic search if enabled
+            if self.settings['use_semantic_search']:
+                semantic_results = self.vector_search.search(
+                    query,
+                    top_k=top_k * 2,  # Get more results for combining
+                    threshold=self.settings['min_similarity']
+                )
+
+                # Convert semantic results to common format
+                for result in semantic_results:
+                    results.append({
+                        'file_path': result['file_path'],
+                        'file_name': result['file_name'],
+                        'file_type': result['file_type'],
+                        'metadata': result['metadata'],
+                        'semantic_score': result['similarity'],
+                        'keyword_score': 0.0,
+                        'rank': result['rank']
+                    })
+
+            # Perform keyword search
+            keyword_results = self._keyword_search(query, top_k * 2)
+
+            # Add keyword results or update scores for existing results
+            for kr in keyword_results:
+                existing = next(
+                    (r for r in results if r['file_path'] == kr['file_path']), None)
+                if existing:
+                    existing['keyword_score'] = kr['score']
                 else:
-                    # Insert new file
-                    cursor.execute('''
-                        INSERT INTO files (
-                            path, filename, extension, size, created_time, modified_time, indexed_time, category, content_hash
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (
-                        file_info['path'],
-                        os.path.basename(file_info['path']),
-                        os.path.splitext(file_info['path'])[1].lower(),
-                        file_info.get('file_size', 0),
-                        file_info.get('created_time', 0),
-                        file_info.get('modified_time', 0),
-                        time.time(),
-                        file_info.get('category', ''),
-                        file_info.get('content_hash', '')
-                    ))
+                    results.append({
+                        'file_path': kr['file_path'],
+                        'file_name': kr['file_name'],
+                        'file_type': kr['file_type'],
+                        'metadata': kr['metadata'],
+                        'semantic_score': 0.0,
+                        'keyword_score': kr['score'],
+                        'rank': len(results) + 1
+                    })
 
-                    file_id = cursor.lastrowid
-                    indexed_count += 1
+            # Combine scores
+            for result in results:
+                if self.settings['combine_method'] == 'weighted_average':
+                    semantic_weight = self.settings['semantic_weight']
+                    keyword_weight = 1 - semantic_weight
+                    result['score'] = (
+                        result['semantic_score'] * semantic_weight +
+                        result['keyword_score'] * keyword_weight
+                    )
+                elif self.settings['combine_method'] == 'max':
+                    result['score'] = max(
+                        result['semantic_score'],
+                        result['keyword_score']
+                    )
+                else:  # Default to average
+                    result['score'] = (
+                        result['semantic_score'] +
+                        result['keyword_score']
+                    ) / 2
 
-                # Insert content
-                if 'content' in file_info and file_info['content']:
-                    cursor.execute('INSERT INTO content (file_id, content) VALUES (?, ?)',
-                                   (file_id, file_info['content']))
+            # Sort by combined score
+            results.sort(key=lambda x: x['score'], reverse=True)
 
-                # Insert metadata
-                if 'metadata' in file_info and file_info['metadata']:
-                    for key, value in file_info['metadata'].items():
-                        if value is not None:
-                            cursor.execute('INSERT INTO metadata (file_id, key, value) VALUES (?, ?, ?)',
-                                           (file_id, key, str(value)))
+            # Apply filters
+            if filters:
+                results = self._apply_filters(results, filters)
 
-                # Insert tags
-                if 'tags' in file_info and file_info['tags']:
-                    for tag in file_info['tags']:
-                        cursor.execute('INSERT INTO tags (file_id, tag) VALUES (?, ?)',
-                                       (file_id, tag))
+            # Limit results
+            results = results[:top_k]
 
-                # Commit every 100 files to avoid large transactions
-                if (idx + 1) % 100 == 0:
-                    conn.commit()
+            # Update ranks
+            for i, result in enumerate(results):
+                result['rank'] = i + 1
 
-            except Exception as e:
-                logger.error(
-                    f"Error indexing file {file_info['path']}: {str(e)}")
-                error_count += 1
+            return results
 
-        # Final commit
-        conn.commit()
-        conn.close()
+        except Exception as e:
+            self.logger.error(f"Error performing search: {e}")
+            return []
 
-        return {
-            "total": total_files,
-            "indexed": indexed_count,
-            "updated": updated_count,
-            "errors": error_count
-        }
+    def find_similar(self, file_path: str, top_k: int = 5) -> List[Dict[str, Any]]:
+        """
+        Find documents similar to a given document.
+
+        Args:
+            file_path: Path to the document to compare against
+            top_k: Number of similar documents to return
+
+        Returns:
+            List of similar documents with scores
+        """
+        try:
+            if not self.settings['use_semantic_search']:
+                raise ValueError("Semantic search is disabled")
+
+            return self.vector_search.find_similar_documents(file_path, top_k)
+
+        except Exception as e:
+            self.logger.error(f"Error finding similar documents: {e}")
+            return []
+
+    def _build_keyword_index(self, files: List[Dict[str, Any]]) -> None:
+        """Build keyword search index."""
+        self.keyword_index = {}
+
+        for file_info in files:
+            terms = self._extract_search_terms(file_info)
+
+            for term in terms:
+                if term not in self.keyword_index:
+                    self.keyword_index[term] = []
+                self.keyword_index[term].append(file_info)
+
+    def _keyword_search(self, query: str, top_k: int) -> List[Dict[str, Any]]:
+        """Perform keyword-based search."""
+        if not hasattr(self, 'keyword_index'):
+            return []
+
+        # Extract search terms from query
+        query_terms = self._extract_search_terms({'content': query})
+
+        # Find matching documents
+        matches = {}
+        for term in query_terms:
+            if term in self.keyword_index:
+                for doc in self.keyword_index[term]:
+                    if doc['file_path'] not in matches:
+                        matches[doc['file_path']] = {
+                            'doc': doc,
+                            'matches': 0
+                        }
+                    matches[doc['file_path']]['matches'] += 1
+
+        # Calculate scores
+        results = []
+        for file_path, match_info in matches.items():
+            score = match_info['matches'] / len(query_terms)
+            results.append({
+                'file_path': file_path,
+                'file_name': match_info['doc']['file_name'],
+                'file_type': match_info['doc']['file_type'],
+                'metadata': match_info['doc'].get('metadata', {}),
+                'score': score
+            })
+
+        # Sort by score
+        results.sort(key=lambda x: x['score'], reverse=True)
+        return results[:top_k]
+
+    def _extract_search_terms(self, doc: Dict[str, Any]) -> List[str]:
+        """Extract search terms from document."""
+        terms = set()
+
+        # Extract from content
+        if 'content' in doc:
+            words = re.findall(r'\w+', doc['content'].lower())
+            terms.update(words)
+
+        # Extract from metadata
+        if 'metadata' in doc:
+            for key, value in doc['metadata'].items():
+                if isinstance(value, str):
+                    words = re.findall(r'\w+', value.lower())
+                    terms.update(words)
+
+        # Extract from OCR text
+        if 'ocr_data' in doc and doc['ocr_data'].get('success'):
+            if doc['ocr_data']['type'] == 'pdf':
+                for page in doc['ocr_data']['page_results']:
+                    words = re.findall(r'\w+', page['text'].lower())
+                    terms.update(words)
+            else:
+                words = re.findall(r'\w+', doc['ocr_data']['text'].lower())
+                terms.update(words)
+
+        return list(terms)
+
+    def _apply_filters(self, results: List[Dict[str, Any]], filters: Dict) -> List[Dict[str, Any]]:
+        """Apply filters to search results."""
+        filtered = results.copy()
+
+        # File type filter
+        if 'file_type' in filters:
+            filtered = [r for r in filtered if r['file_type']
+                        == filters['file_type']]
+
+        # Category filter
+        if 'category' in filters:
+            filtered = [r for r in filtered if r['metadata'].get(
+                'category') == filters['category']]
+
+        # Date range filter
+        if 'date_range' in filters:
+            date_range = filters['date_range']
+
+            if 'start' in date_range:
+                start_date = datetime.strptime(date_range['start'], '%Y-%m-%d')
+                filtered = [r for r in filtered if datetime.fromtimestamp(
+                    r['metadata'].get('modified_time', 0)) >= start_date]
+
+            if 'end' in date_range:
+                end_date = datetime.strptime(date_range['end'], '%Y-%m-%d')
+                filtered = [r for r in filtered if datetime.fromtimestamp(
+                    r['metadata'].get('modified_time', 0)) <= end_date]
+
+        return filtered
+
+    def clear_cache(self) -> bool:
+        """Clear search cache."""
+        try:
+            success = self.vector_search.clear_cache()
+            if hasattr(self, 'keyword_index'):
+                delattr(self, 'keyword_index')
+            return success
+        except Exception as e:
+            self.logger.error(f"Error clearing cache: {e}")
+            return False
 
     def remove_missing_files(self, existing_paths):
         """
@@ -268,216 +432,6 @@ class SearchEngine:
         conn.close()
 
         return removed_count
-
-    def search(self, query, filters=None, sort_by="relevance", page=1, page_size=20):
-        """
-        Search for files matching the query and filters
-
-        Args:
-            query: Search query string
-            filters: Dictionary with filters (file_type, category, date_range, size_range, tags)
-            sort_by: Sort results by ('relevance', 'date', 'size', 'name')
-            page: Page number (1-based)
-            page_size: Number of results per page
-
-        Returns:
-            Dictionary with search results and pagination info
-        """
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row  # Return rows as dictionaries
-        cursor = conn.cursor()
-
-        # Parse query for special operators
-        parsed_query = self._parse_query(query)
-
-        # Build the SQL query
-        sql_query = '''
-            SELECT DISTINCT f.id, f.path, f.filename, f.extension, f.size,
-                   f.created_time, f.modified_time, f.category
-            FROM files f
-            LEFT JOIN content c ON f.id = c.file_id
-            LEFT JOIN metadata m ON f.id = m.file_id
-            LEFT JOIN tags t ON f.id = t.file_id
-            WHERE 1=1
-        '''
-
-        params = []
-
-        # Add search conditions
-        if parsed_query['terms']:
-            search_conditions = []
-            for term in parsed_query['terms']:
-                if term.startswith('-'):
-                    # Exclude term
-                    term = term[1:]
-                    search_conditions.append('''
-                        f.id NOT IN (
-                            SELECT file_id FROM content WHERE content LIKE ?
-                            UNION
-                            SELECT file_id FROM metadata WHERE value LIKE ?
-                            UNION
-                            SELECT id FROM files WHERE filename LIKE ?
-                        )
-                    ''')
-                    params.extend([f'%{term}%', f'%{term}%', f'%{term}%'])
-                else:
-                    # Include term
-                    search_conditions.append('''
-                        (c.content LIKE ? OR m.value LIKE ? OR f.filename LIKE ?)
-                    ''')
-                    params.extend([f'%{term}%', f'%{term}%', f'%{term}%'])
-
-            if search_conditions:
-                sql_query += ' AND ' + ' AND '.join(search_conditions)
-
-        # Add filters
-        if filters:
-            if 'file_type' in filters and filters['file_type']:
-                if isinstance(filters['file_type'], list):
-                    placeholders = ', '.join(
-                        ['?' for _ in filters['file_type']])
-                    sql_query += f' AND f.extension IN ({placeholders})'
-                    params.extend(filters['file_type'])
-                else:
-                    sql_query += ' AND f.extension = ?'
-                    params.append(filters['file_type'])
-
-            if 'category' in filters and filters['category']:
-                if isinstance(filters['category'], list):
-                    placeholders = ', '.join(
-                        ['?' for _ in filters['category']])
-                    sql_query += f' AND f.category IN ({placeholders})'
-                    params.extend(filters['category'])
-                else:
-                    sql_query += ' AND f.category = ?'
-                    params.append(filters['category'])
-
-            if 'date_range' in filters and filters['date_range']:
-                if 'start' in filters['date_range'] and filters['date_range']['start']:
-                    start_timestamp = self._date_to_timestamp(
-                        filters['date_range']['start'])
-                    sql_query += ' AND f.modified_time >= ?'
-                    params.append(start_timestamp)
-
-                if 'end' in filters['date_range'] and filters['date_range']['end']:
-                    end_timestamp = self._date_to_timestamp(
-                        filters['date_range']['end'])
-                    sql_query += ' AND f.modified_time <= ?'
-                    params.append(end_timestamp)
-
-            if 'size_range' in filters and filters['size_range']:
-                if 'min' in filters['size_range'] and filters['size_range']['min'] is not None:
-                    sql_query += ' AND f.size >= ?'
-                    params.append(filters['size_range']['min'])
-
-                if 'max' in filters['size_range'] and filters['size_range']['max'] is not None:
-                    sql_query += ' AND f.size <= ?'
-                    params.append(filters['size_range']['max'])
-
-            if 'tags' in filters and filters['tags']:
-                if isinstance(filters['tags'], list):
-                    tag_conditions = []
-                    for tag in filters['tags']:
-                        tag_conditions.append('t.tag = ?')
-                        params.append(tag)
-
-                    sql_query += ' AND (' + ' OR '.join(tag_conditions) + ')'
-                else:
-                    sql_query += ' AND t.tag = ?'
-                    params.append(filters['tags'])
-
-        # Add sorting
-        if sort_by == 'date':
-            sql_query += ' ORDER BY f.modified_time DESC'
-        elif sort_by == 'size':
-            sql_query += ' ORDER BY f.size DESC'
-        elif sort_by == 'name':
-            sql_query += ' ORDER BY f.filename ASC'
-        else:  # relevance - default
-            # For relevance sorting, we need to count matches
-            # This is a simplified approach - a real implementation would use full-text search
-            if parsed_query['terms']:
-                sql_query = f'''
-                    SELECT *, (
-                        {' + '.join(['(CASE WHEN c.content LIKE ? THEN 1 ELSE 0 END)' for _ in parsed_query['terms']])} +
-                        {' + '.join(['(CASE WHEN m.value LIKE ? THEN 1 ELSE 0 END)' for _ in parsed_query['terms']])} +
-                        {' + '.join(['(CASE WHEN f.filename LIKE ? THEN 2 ELSE 0 END)' for _ in parsed_query['terms']])}
-                    ) as relevance
-                    FROM ({sql_query})
-                    ORDER BY relevance DESC
-                '''
-                for term in parsed_query['terms']:
-                    if not term.startswith('-'):
-                        params.extend([f'%{term}%', f'%{term}%', f'%{term}%'])
-
-        # Add pagination
-        offset = (page - 1) * page_size
-        sql_query += ' LIMIT ? OFFSET ?'
-        params.extend([page_size, offset])
-
-        # Execute the query
-        cursor.execute(sql_query, params)
-        results = [dict(row) for row in cursor.fetchall()]
-
-        # Get total count for pagination
-        count_query = f'''
-            SELECT COUNT(DISTINCT f.id) as total
-            FROM files f
-            LEFT JOIN content c ON f.id = c.file_id
-            LEFT JOIN metadata m ON f.id = m.file_id
-            LEFT JOIN tags t ON f.id = t.file_id
-            WHERE 1=1
-        '''
-
-        # Add the same conditions as the main query (without ORDER BY and LIMIT)
-        if parsed_query['terms'] or filters:
-            count_params = params[:-2]  # Remove LIMIT and OFFSET params
-            cursor.execute(count_query + sql_query.split('ORDER BY')
-                           [0].split('LIMIT')[0], count_params)
-        else:
-            cursor.execute(count_query)
-
-        total_count = cursor.fetchone()['total']
-
-        # Fetch additional information for each result
-        for result in results:
-            # Get metadata
-            cursor.execute(
-                'SELECT key, value FROM metadata WHERE file_id = ?', (result['id'],))
-            result['metadata'] = {row['key']: row['value']
-                                  for row in cursor.fetchall()}
-
-            # Get tags
-            cursor.execute(
-                'SELECT tag FROM tags WHERE file_id = ?', (result['id'],))
-            result['tags'] = [row['tag'] for row in cursor.fetchall()]
-
-            # Format dates
-            if 'created_time' in result and result['created_time']:
-                result['created_time_formatted'] = datetime.fromtimestamp(
-                    result['created_time']).strftime('%Y-%m-%d %H:%M:%S')
-
-            if 'modified_time' in result and result['modified_time']:
-                result['modified_time_formatted'] = datetime.fromtimestamp(
-                    result['modified_time']).strftime('%Y-%m-%d %H:%M:%S')
-
-            # Format file size
-            if 'size' in result and result['size']:
-                result['size_formatted'] = self._format_file_size(
-                    result['size'])
-
-        conn.close()
-
-        return {
-            'results': results,
-            'total': total_count,
-            'page': page,
-            'page_size': page_size,
-            'total_pages': (total_count + page_size - 1) // page_size,
-            'query': query,
-            'filters': filters,
-            'sort_by': sort_by
-        }
 
     def _parse_query(self, query):
         """

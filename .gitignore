@@ -130,3 +130,8 @@ packaging/
 # OCR cache
 src/cache/ocr/
 *.ocr.json
+
+# Vector search cache
+src/cache/embeddings/
+*.bin
+*.pkl

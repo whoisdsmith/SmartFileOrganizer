@@ -83,6 +83,36 @@ class APIPluginBase(ABC):
             Boolean indicating if the API supports batch operations
         """
         return False
+        
+    @property
+    def supports_caching(self) -> bool:
+        """
+        Indicate whether this API supports response caching.
+        
+        Returns:
+            Boolean indicating if the API supports response caching
+        """
+        return True
+        
+    @property
+    def cacheable_operations(self) -> List[str]:
+        """
+        Return a list of operations that can be cached.
+        
+        Returns:
+            List of operation names that support caching
+        """
+        return []
+        
+    @property
+    def cache_ttls(self) -> Dict[str, int]:
+        """
+        Return a dictionary mapping operation names to TTL values in seconds.
+        
+        Returns:
+            Dictionary mapping operation names to TTL values
+        """
+        return {}
     
     @property
     @abstractmethod

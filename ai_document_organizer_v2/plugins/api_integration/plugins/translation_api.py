@@ -98,6 +98,44 @@ class TranslationAPIPlugin(APIPluginBase):
             Boolean indicating if the API supports batch operations
         """
         return True
+        
+    @property
+    def supports_caching(self) -> bool:
+        """
+        Indicate whether this API supports response caching.
+        
+        Returns:
+            Boolean indicating if the API supports response caching
+        """
+        return True
+        
+    @property
+    def cacheable_operations(self) -> List[str]:
+        """
+        Return a list of operations that can be cached.
+        
+        Returns:
+            List of operation names that support caching
+        """
+        return [
+            'translate_text',
+            'detect_language',
+            'get_supported_languages'
+        ]
+        
+    @property
+    def cache_ttls(self) -> Dict[str, int]:
+        """
+        Return a dictionary mapping operation names to TTL values in seconds.
+        
+        Returns:
+            Dictionary mapping operation names to TTL values
+        """
+        return {
+            'translate_text': 86400,        # 24 hours
+            'detect_language': 86400,       # 24 hours
+            'get_supported_languages': 604800  # 7 days
+        }
     
     def initialize(self, config: Dict[str, Any]) -> bool:
         """

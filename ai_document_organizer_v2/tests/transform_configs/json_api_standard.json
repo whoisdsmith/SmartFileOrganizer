@@ -1,0 +1,38 @@
+{
+  "name": "json_api_standard",
+  "description": "Standard transformation for JSON API responses",
+  "stages": [
+    {
+      "type": "filter",
+      "mode": "exclude",
+      "fields": [
+        "internal_id",
+        "debug_info",
+        "_private"
+      ]
+    },
+    {
+      "type": "map",
+      "mode": "rename",
+      "field_map": {
+        "id": "id",
+        "type": "type",
+        "attributes": "attributes",
+        "relationships": "relationships"
+      }
+    },
+    {
+      "type": "errorhandling",
+      "mode": "standardize",
+      "error_template": {
+        "errors": [
+          {
+            "status": "${error_code}",
+            "title": "${error}",
+            "detail": "${error_detail}"
+          }
+        ]
+      }
+    }
+  ]
+}

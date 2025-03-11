@@ -1,0 +1,62 @@
+{
+    "name": "document_extraction_transformer",
+    "description": "Transforms document extraction API responses",
+    "stages": [
+        {
+            "type": "filter",
+            "name": "extract_main_content",
+            "config": {
+                "path": "content"
+            }
+        },
+        {
+            "type": "text_processing",
+            "name": "clean_text",
+            "config": {
+                "operations": [
+                    {
+                        "type": "strip_html",
+                        "enabled": true
+                    },
+                    {
+                        "type": "normalize_whitespace",
+                        "enabled": true
+                    },
+                    {
+                        "type": "remove_urls",
+                        "enabled": true
+                    }
+                ]
+            }
+        },
+        {
+            "type": "mapping",
+            "name": "add_metadata",
+            "config": {
+                "mappings": {
+                    "content": ".",
+                    "word_count": "word_count(.)",
+                    "source_file": "context.parameters.file_name",
+                    "extraction_timestamp": "timestamp()",
+                    "is_cached": "context.from_cache || false"
+                }
+            }
+        },
+        {
+            "type": "enrichment",
+            "name": "add_summary",
+            "config": {
+                "fields": {
+                    "summary": {
+                        "type": "text_summary",
+                        "source": ".",
+                        "options": {
+                            "max_length": 200,
+                            "min_length": 50
+                        }
+                    }
+                }
+            }
+        }
+    ]
+}

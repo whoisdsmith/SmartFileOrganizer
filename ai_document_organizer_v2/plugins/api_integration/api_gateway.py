@@ -2,7 +2,8 @@
 API Gateway for External API Integration Framework.
 
 This module provides a centralized entry point for all external API calls,
-managing authentication, rate limiting, and plugin registration.
+managing authentication, rate limiting, response caching, transformation,
+and plugin registration.
 """
 
 import logging
@@ -13,6 +14,8 @@ from typing import Any, Dict, List, Optional, Union, Set
 from .api_plugin_base import APIPluginBase
 from .rate_limiter import RateLimiter
 from .auth_provider import AuthenticationProvider
+from .cache_manager import CacheManager
+from .transformer import TransformationManager
 
 
 logger = logging.getLogger(__name__)
@@ -37,6 +40,18 @@ class APIGateway:
         self.rate_limiter = RateLimiter()
         self.auth_provider = AuthenticationProvider()
         
+        # Initialize cache manager
+        cache_config = self.config.get('cache_config', {})
+        self.cache_manager = CacheManager(cache_config)
+        
+        # Initialize transformation manager
+        transform_config_dir = self.config.get('transform_config_dir')
+        self.transform_manager = TransformationManager(transform_config_dir)
+        
+        # Create default transformation pipelines if configured
+        if self.config.get('create_default_transformations', True):
+            self.transform_manager.create_default_pipelines()
+        
         # Plugin registry
         self.plugins = {}  # type: Dict[str, APIPluginBase]
         self.plugin_status = {}  # type: Dict[str, Dict[str, Any]]
@@ -44,7 +59,7 @@ class APIGateway:
         # Thread safety
         self._lock = threading.RLock()
         
-        logger.info("API Gateway initialized")
+        logger.info("API Gateway initialized with caching and transformation capabilities")
     
     def register_plugin(self, plugin: APIPluginBase) -> bool:
         """
@@ -298,6 +313,8 @@ class APIGateway:
     def execute_operation(self,
                          plugin_name: str,
                          operation: str,
+                         transform_pipeline: Optional[str] = None,
+                         bypass_cache: bool = False,
                          **kwargs) -> Dict[str, Any]:
         """
         Execute a named operation through a plugin.
@@ -305,6 +322,8 @@ class APIGateway:
         Args:
             plugin_name: Name of the plugin to use
             operation: Name of the operation to execute
+            transform_pipeline: Optional name of a transformation pipeline to apply to the result
+            bypass_cache: Whether to bypass the cache
             **kwargs: Operation-specific parameters
             
         Returns:
@@ -343,6 +362,43 @@ class APIGateway:
                     'wait_time': wait_time
                 }
         
+        # Check cache if caching is enabled and not bypassed
+        if not bypass_cache and plugin.cacheable_operations and operation in plugin.cacheable_operations:
+            cache_result = self.cache_manager.get(plugin_name, operation, kwargs)
+            
+            if cache_result.get('cache_hit', False):
+                # We have a cache hit
+                logger.info(f"Cache hit for {plugin_name}.{operation}")
+                
+                # Apply transformation if requested
+                if transform_pipeline and cache_result.get('cache_data') is not None:
+                    transformed_data = self._apply_transformation(
+                        cache_result['cache_data'], 
+                        transform_pipeline,
+                        {
+                            'plugin_name': plugin_name,
+                            'operation': operation,
+                            'parameters': kwargs,
+                            'from_cache': True,
+                            'cache_metadata': cache_result.get('metadata', {})
+                        }
+                    )
+                    
+                    return {
+                        'success': True,
+                        'data': transformed_data,
+                        'from_cache': True,
+                        'cache_metadata': cache_result.get('metadata', {})
+                    }
+                    
+                # Return cached data without transformation
+                return {
+                    'success': True,
+                    'data': cache_result['cache_data'],
+                    'from_cache': True,
+                    'cache_metadata': cache_result.get('metadata', {})
+                }
+        
         try:
             # Update plugin status
             with self._lock:
@@ -362,6 +418,42 @@ class APIGateway:
                 with self._lock:
                     if plugin_name in self.plugin_status:
                         self.plugin_status[plugin_name]['error_count'] += 1
+                        
+                # Apply error transformation if configured
+                if transform_pipeline:
+                    context = {
+                        'plugin_name': plugin_name,
+                        'operation': operation,
+                        'parameters': kwargs,
+                        'from_cache': False,
+                        'error': result.get('error'),
+                        'error_code': result.get('error_code', 500)
+                    }
+                    
+                    transformed_data = self._apply_transformation(result, transform_pipeline, context)
+                    result['data'] = transformed_data
+                    
+                return result
+            
+            # Cache successful result if caching is enabled
+            if plugin.cacheable_operations and operation in plugin.cacheable_operations:
+                ttl = None
+                if hasattr(plugin, 'cache_ttls') and isinstance(plugin.cache_ttls, dict):
+                    ttl = plugin.cache_ttls.get(operation)
+                    
+                self.cache_manager.put(plugin_name, operation, kwargs, result.get('data'), ttl)
+            
+            # Apply transformation if requested
+            if transform_pipeline:
+                context = {
+                    'plugin_name': plugin_name,
+                    'operation': operation,
+                    'parameters': kwargs,
+                    'from_cache': False
+                }
+                
+                transformed_data = self._apply_transformation(result.get('data'), transform_pipeline, context)
+                result['data'] = transformed_data
             
             return result
             
@@ -373,11 +465,27 @@ class APIGateway:
                 if plugin_name in self.plugin_status:
                     self.plugin_status[plugin_name]['error_count'] += 1
             
-            return {
+            error_result = {
                 'success': False,
                 'error': str(e),
                 'data': None
             }
+            
+            # Apply error transformation if configured
+            if transform_pipeline:
+                context = {
+                    'plugin_name': plugin_name,
+                    'operation': operation,
+                    'parameters': kwargs,
+                    'from_cache': False,
+                    'error': str(e),
+                    'error_code': 500
+                }
+                
+                transformed_error = self._apply_transformation(error_result, transform_pipeline, context)
+                error_result['data'] = transformed_error
+                
+            return error_result
     
     def get_registered_plugins(self) -> List[str]:
         """
@@ -447,3 +555,101 @@ class APIGateway:
                 self.plugin_status[plugin_name]['error_count'] = 0
                 
         return True
+        
+    def _apply_transformation(self, data: Any, pipeline_name: str, context: Optional[Dict[str, Any]] = None) -> Any:
+        """
+        Apply a transformation pipeline to data.
+        
+        Args:
+            data: Data to transform
+            pipeline_name: Name of the transformation pipeline to apply
+            context: Optional context dictionary for the transformation
+            
+        Returns:
+            Transformed data
+        """
+        if not pipeline_name:
+            return data
+            
+        # Get the pipeline
+        pipeline = self.transform_manager.get_pipeline(pipeline_name)
+        
+        if not pipeline:
+            logger.warning(f"Transformation pipeline {pipeline_name} not found")
+            return data
+            
+        try:
+            # Apply the transformation
+            return pipeline.transform(data, context)
+            
+        except Exception as e:
+            logger.error(f"Error applying transformation pipeline {pipeline_name}: {e}")
+            return data
+            
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """
+        Get cache statistics.
+        
+        Returns:
+            Dictionary with cache statistics
+        """
+        return self.cache_manager.get_stats()
+        
+    def clear_cache(self) -> Dict[str, Any]:
+        """
+        Clear the cache.
+        
+        Returns:
+            Dictionary with clear operation result
+        """
+        return self.cache_manager.clear()
+        
+    def invalidate_cache(self, plugin_name: Optional[str] = None, 
+                       operation: Optional[str] = None,
+                       parameters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Invalidate cache entries that match the given criteria.
+        
+        Args:
+            plugin_name: Optional plugin name filter
+            operation: Optional operation name filter
+            parameters: Optional parameters filter
+            
+        Returns:
+            Dictionary with invalidation result
+        """
+        return self.cache_manager.invalidate(plugin_name, operation, parameters)
+        
+    def get_transformation_pipelines(self) -> List[Dict[str, Any]]:
+        """
+        Get a list of available transformation pipelines.
+        
+        Returns:
+            List of pipeline information dictionaries
+        """
+        return self.transform_manager.list_pipelines()
+        
+    def register_transformation_pipeline(self, name: str, config: Dict[str, Any]) -> bool:
+        """
+        Register a new transformation pipeline.
+        
+        Args:
+            name: Name for the pipeline
+            config: Configuration dictionary for the pipeline
+            
+        Returns:
+            True if registration was successful, False otherwise
+        """
+        return self.transform_manager.register_pipeline(name, config)
+        
+    def save_transformation_pipeline(self, name: str) -> bool:
+        """
+        Save a transformation pipeline configuration to a file.
+        
+        Args:
+            name: Name of the pipeline to save
+            
+        Returns:
+            True if save was successful, False otherwise
+        """
+        return self.transform_manager.save_pipeline_config(name)

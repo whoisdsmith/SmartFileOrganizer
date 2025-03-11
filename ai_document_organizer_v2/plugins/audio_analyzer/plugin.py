@@ -37,6 +37,16 @@ try:
     FFMPEG_AVAILABLE = True
 except ImportError:
     FFMPEG_AVAILABLE = False
+    
+# Try importing librosa for advanced audio analysis
+try:
+    import librosa
+    import librosa.feature
+    import librosa.beat
+    import librosa.display
+    LIBROSA_AVAILABLE = True
+except ImportError:
+    LIBROSA_AVAILABLE = False
 
 logger = logging.getLogger("AIDocumentOrganizerV2.AudioAnalyzer")
 
@@ -95,10 +105,17 @@ class AudioAnalyzerPlugin(MediaAnalyzerPlugin):
         if not self.ffmpeg_available:
             logger.warning("FFmpeg library not available. Install ffmpeg-python for waveform generation.")
             # Return True anyway to allow partial functionality
+            
+        # Check for librosa (advanced audio analysis)
+        if not LIBROSA_AVAILABLE:
+            logger.warning("Librosa library not available. Advanced audio analysis features will be disabled.")
+            # Return True anyway to allow partial functionality
+        else:
+            logger.info("Librosa found. Advanced audio analysis features are available.")
         
         # Register default settings if not already present
         if self.settings_manager is not None:
-            # Use get_setting/set_setting to access settings manager
+            # Waveform visualization settings
             waveform_enabled = self.get_setting("audio_analyzer.waveform_enabled", None)
             if waveform_enabled is None:
                 self.set_setting("audio_analyzer.waveform_enabled", True)
@@ -122,8 +139,44 @@ class AudioAnalyzerPlugin(MediaAnalyzerPlugin):
             waveform_dpi = self.get_setting("audio_analyzer.waveform_dpi", None)
             if waveform_dpi is None:
                 self.set_setting("audio_analyzer.waveform_dpi", 100)
+            
+            # Advanced audio analysis settings
+            if LIBROSA_AVAILABLE:
+                tempo_enabled = self.get_setting("audio_analyzer.tempo_enabled", None)
+                if tempo_enabled is None:
+                    self.set_setting("audio_analyzer.tempo_enabled", True)
+                    
+                spectral_enabled = self.get_setting("audio_analyzer.spectral_enabled", None)
+                if spectral_enabled is None:
+                    self.set_setting("audio_analyzer.spectral_enabled", True)
+                    
+                chroma_enabled = self.get_setting("audio_analyzer.chroma_enabled", None)
+                if chroma_enabled is None:
+                    self.set_setting("audio_analyzer.chroma_enabled", True)
+                    
+                mfcc_count = self.get_setting("audio_analyzer.mfcc_count", None)
+                if mfcc_count is None:
+                    self.set_setting("audio_analyzer.mfcc_count", 13)
+                    
+                use_librosa_waveform = self.get_setting("audio_analyzer.use_librosa_waveform", None)
+                if use_librosa_waveform is None:
+                    self.set_setting("audio_analyzer.use_librosa_waveform", True)
                 
             logger.info("Audio analyzer settings initialized")
+            
+        # Update dependencies list based on available libraries
+        dependencies = ["mutagen", "matplotlib", "ffmpeg-python"]
+        if LIBROSA_AVAILABLE:
+            dependencies.append("librosa")
+            
+        # Update plugin description to reflect capabilities
+        description = "Analyzes audio files, extracts metadata, and generates waveform visualizations"
+        if LIBROSA_AVAILABLE:
+            description += " with advanced beat detection and tempo analysis"
+            
+        # Update plugin info
+        self.dependencies = dependencies
+        self.description = description
             
         return True
     
@@ -160,10 +213,10 @@ class AudioAnalyzerPlugin(MediaAnalyzerPlugin):
             }
         
         try:
-            # Extract metadata and analyze audio
+            # Extract basic metadata from audio file
             metadata = self._extract_audio_metadata(file_path)
             
-            # Generate waveform if enabled
+            # Generate waveform visualization if enabled
             preview_path = None
             waveform_enabled = self.get_setting("audio_analyzer.waveform_enabled", True)
             
@@ -172,7 +225,71 @@ class AudioAnalyzerPlugin(MediaAnalyzerPlugin):
                 if preview_path:
                     metadata['waveform_path'] = preview_path
             
-            # Return analysis results
+            # Perform advanced audio analysis if librosa is available
+            if LIBROSA_AVAILABLE:
+                try:
+                    # Check if user settings have disabled any analysis
+                    advanced_analysis_enabled = True
+                    
+                    # Perform advanced audio analysis and update metadata
+                    if advanced_analysis_enabled:
+                        advanced_features = self.analyze_audio_features(file_path)
+                        
+                        if advanced_features.get('success', False):
+                            # Add advanced feature data to metadata
+                            metadata['tempo'] = advanced_features.get('tempo')
+                            metadata['beat_count'] = advanced_features.get('beat_count')
+                            metadata['beat_regularity'] = advanced_features.get('beat_regularity')
+                            metadata['dominant_pitch'] = advanced_features.get('dominant_pitch')
+                            metadata['tonal_strength'] = advanced_features.get('tonal_strength')
+                            metadata['spectral_centroid'] = advanced_features.get('spectral_centroid')
+                            
+                            # Add detailed analysis to a separate field
+                            metadata['advanced_analysis'] = {
+                                'beat_times': advanced_features.get('beat_times'),
+                                'avg_beat_strength': advanced_features.get('avg_beat_strength'),
+                                'spectral_bandwidth': advanced_features.get('spectral_bandwidth'),
+                                'spectral_contrast': advanced_features.get('spectral_contrast'),
+                                'spectral_rolloff': advanced_features.get('spectral_rolloff'),
+                                'zero_crossing_rate': advanced_features.get('zero_crossing_rate'),
+                                'rms_energy': advanced_features.get('rms_energy'),
+                                'mfcc_features': advanced_features.get('mfcc_features'),
+                                'chroma_features': advanced_features.get('chroma_features'),
+                                'tonal_spread': advanced_features.get('tonal_spread')
+                            }
+                            
+                            # Add audio quality assessment based on spectral features
+                            if 'quality_rating' in metadata:
+                                # Adjust quality rating based on advanced analysis
+                                quality_rating = metadata['quality_rating']
+                                
+                                # Adjust for beat regularity (well-produced music tends to have regular beats)
+                                if advanced_features.get('beat_regularity', 0) > 0.8:
+                                    quality_rating += 0.5
+                                
+                                # Adjust for spectral balance
+                                if advanced_features.get('spectral_contrast', 0) > 30:
+                                    quality_rating += 0.5
+                                
+                                # Cap rating at 10.0
+                                metadata['quality_rating'] = min(10.0, quality_rating)
+                                
+                                # Add quality assessment text
+                                if metadata['quality_rating'] >= 9.0:
+                                    metadata['quality_assessment'] = "Excellent audio quality with well-balanced frequency response"
+                                elif metadata['quality_rating'] >= 7.5:
+                                    metadata['quality_assessment'] = "Very good audio quality"
+                                elif metadata['quality_rating'] >= 6.0:
+                                    metadata['quality_assessment'] = "Good audio quality"
+                                elif metadata['quality_rating'] >= 4.0:
+                                    metadata['quality_assessment'] = "Average audio quality"
+                                else:
+                                    metadata['quality_assessment'] = "Below average audio quality"
+                except Exception as e:
+                    logger.warning(f"Error in advanced audio analysis: {e}")
+                    metadata['advanced_analysis_error'] = str(e)
+            
+            # Return final analysis results
             return {
                 'metadata': metadata,
                 'preview_path': preview_path,
@@ -230,7 +347,19 @@ class AudioAnalyzerPlugin(MediaAnalyzerPlugin):
             'bit_rate': None,
             'bit_depth': None,
             'duration': None,
-            'format': None
+            'format': None,
+            # Audio analysis fields
+            'tempo': None,
+            'beats': None,
+            'beat_times': None,
+            'spectral_centroid': None,
+            'spectral_bandwidth': None,
+            'spectral_contrast': None,
+            'spectral_rolloff': None,
+            'zero_crossing_rate': None,
+            'chroma_features': None,
+            'mfcc_features': None,
+            'rms_energy': None
         }
         
         # Extract detailed metadata if mutagen is available
@@ -484,6 +613,14 @@ class AudioAnalyzerPlugin(MediaAnalyzerPlugin):
                 os.makedirs(output_dir, exist_ok=True)
                 output_path = os.path.join(output_dir, f"{base_name}_waveform.png")
             
+            # Try using librosa first if available (better quality)
+            if LIBROSA_AVAILABLE:
+                try:
+                    return self._generate_librosa_waveform(file_path, output_path, width, height, color, bg_color, dpi)
+                except Exception as e:
+                    logger.warning(f"Error generating waveform with librosa, falling back to ffmpeg: {e}")
+                    # Fall back to ffmpeg method
+            
             if not self.ffmpeg_available:
                 logger.warning(f"Cannot generate waveform: ffmpeg-python not available")
                 return None
@@ -540,6 +677,244 @@ class AudioAnalyzerPlugin(MediaAnalyzerPlugin):
             logger.error(f"Error generating waveform visualization: {e}")
             return None
     
+    def _generate_librosa_waveform(self, file_path: str, output_path: str, 
+                                 width: int, height: int, color: str, 
+                                 bg_color: str, dpi: int) -> Optional[str]:
+        """
+        Generate a waveform visualization using librosa (higher quality).
+        
+        Args:
+            file_path: Path to the audio file
+            output_path: Path to save the waveform image
+            width: Width of the waveform in pixels
+            height: Height of the waveform in pixels
+            color: Waveform color
+            bg_color: Background color
+            dpi: DPI for the output image
+            
+        Returns:
+            Path to the generated waveform image or None if generation failed
+        """
+        # Load the audio file with librosa
+        y, sr = librosa.load(file_path, sr=None)
+        
+        # Create the figure
+        fig, ax = plt.subplots(figsize=(width/dpi, height/dpi), dpi=dpi)
+        
+        # Plot the waveform
+        librosa.display.waveshow(y, sr=sr, ax=ax, color=color)
+        
+        # Remove axes and set background color
+        ax.set_axis_off()
+        fig.patch.set_facecolor(bg_color)
+        ax.set_facecolor(bg_color)
+        
+        # Tight layout
+        plt.tight_layout(pad=0)
+        
+        # Save the figure
+        plt.savefig(output_path, dpi=dpi, bbox_inches='tight', pad_inches=0)
+        plt.close(fig)
+        
+        return output_path if os.path.exists(output_path) else None
+    
+    def analyze_audio_features(self, file_path: str) -> Dict[str, Any]:
+        """
+        Perform advanced audio analysis using librosa.
+        
+        Args:
+            file_path: Path to the audio file
+            
+        Returns:
+            Dictionary with audio analysis results
+        """
+        if not LIBROSA_AVAILABLE:
+            logger.warning("Cannot perform advanced audio analysis: librosa not available")
+            return {
+                'success': False,
+                'error': "Librosa library not available"
+            }
+        
+        try:
+            # Load the audio file with librosa
+            y, sr = librosa.load(file_path, sr=None)
+            
+            # Initialize results dictionary
+            results = {
+                'success': True,
+                'sample_rate': sr,
+                'duration': librosa.get_duration(y=y, sr=sr)
+            }
+            
+            # Extract tempo and beat information
+            tempo_enabled = self.get_setting("audio_analyzer.tempo_enabled", True)
+            if tempo_enabled:
+                try:
+                    tempo_result = self._analyze_tempo_and_beats(y, sr)
+                    results.update(tempo_result)
+                except Exception as e:
+                    logger.warning(f"Error analyzing tempo and beats: {e}")
+                    results['tempo_error'] = str(e)
+            
+            # Extract spectral features
+            spectral_enabled = self.get_setting("audio_analyzer.spectral_enabled", True)
+            if spectral_enabled:
+                try:
+                    spectral_result = self._analyze_spectral_features(y, sr)
+                    results.update(spectral_result)
+                except Exception as e:
+                    logger.warning(f"Error analyzing spectral features: {e}")
+                    results['spectral_error'] = str(e)
+            
+            # Extract chromagram features
+            chroma_enabled = self.get_setting("audio_analyzer.chroma_enabled", True)
+            if chroma_enabled:
+                try:
+                    chroma_result = self._analyze_chroma_features(y, sr)
+                    results.update(chroma_result)
+                except Exception as e:
+                    logger.warning(f"Error analyzing chroma features: {e}")
+                    results['chroma_error'] = str(e)
+            
+            return results
+        
+        except Exception as e:
+            logger.error(f"Error performing advanced audio analysis: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def _analyze_tempo_and_beats(self, y: np.ndarray, sr: int) -> Dict[str, Any]:
+        """
+        Analyze tempo and beat information.
+        
+        Args:
+            y: Audio time series
+            sr: Sample rate
+            
+        Returns:
+            Dictionary with tempo and beat analysis results
+        """
+        # Get tempo (BPM)
+        onset_env = librosa.onset.onset_strength(y=y, sr=sr)
+        tempo = librosa.beat.tempo(onset_envelope=onset_env, sr=sr)[0]
+        
+        # Beat tracking
+        beat_frames = librosa.beat.beat_track(y=y, sr=sr)[1]
+        beat_times = librosa.frames_to_time(beat_frames, sr=sr)
+        
+        # Count beats
+        beat_count = len(beat_times)
+        
+        # Calculate average beat strength
+        beat_strengths = onset_env[beat_frames] if len(beat_frames) > 0 else []
+        avg_beat_strength = float(np.mean(beat_strengths)) if len(beat_strengths) > 0 else 0
+        
+        # Calculate beat regularity
+        if len(beat_times) > 1:
+            beat_intervals = np.diff(beat_times)
+            beat_regularity = 1.0 - float(np.std(beat_intervals) / np.mean(beat_intervals))
+            beat_regularity = max(0.0, min(1.0, beat_regularity))  # Clamp between 0 and 1
+        else:
+            beat_regularity = 0.0
+        
+        return {
+            'tempo': float(tempo),
+            'beat_count': beat_count,
+            'beat_times': beat_times.tolist(),
+            'avg_beat_strength': avg_beat_strength,
+            'beat_regularity': beat_regularity
+        }
+    
+    def _analyze_spectral_features(self, y: np.ndarray, sr: int) -> Dict[str, Any]:
+        """
+        Analyze spectral features.
+        
+        Args:
+            y: Audio time series
+            sr: Sample rate
+            
+        Returns:
+            Dictionary with spectral analysis results
+        """
+        # Extract various spectral features
+        
+        # Spectral centroid (brightness)
+        cent = librosa.feature.spectral_centroid(y=y, sr=sr)[0]
+        avg_cent = float(np.mean(cent))
+        
+        # Spectral bandwidth
+        bandwidth = librosa.feature.spectral_bandwidth(y=y, sr=sr)[0]
+        avg_bandwidth = float(np.mean(bandwidth))
+        
+        # Spectral contrast
+        contrast = librosa.feature.spectral_contrast(y=y, sr=sr)
+        avg_contrast = float(np.mean(contrast))
+        
+        # Spectral rolloff
+        rolloff = librosa.feature.spectral_rolloff(y=y, sr=sr)[0]
+        avg_rolloff = float(np.mean(rolloff))
+        
+        # Zero crossing rate (noisiness)
+        zcr = librosa.feature.zero_crossing_rate(y)[0]
+        avg_zcr = float(np.mean(zcr))
+        
+        # Root mean square energy
+        rms = librosa.feature.rms(y=y)[0]
+        avg_rms = float(np.mean(rms))
+        
+        # Mel-frequency cepstral coefficients (MFCCs)
+        mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
+        avg_mfccs = [float(np.mean(mfcc)) for mfcc in mfccs]
+        
+        return {
+            'spectral_centroid': avg_cent,
+            'spectral_bandwidth': avg_bandwidth,
+            'spectral_contrast': avg_contrast,
+            'spectral_rolloff': avg_rolloff,
+            'zero_crossing_rate': avg_zcr,
+            'rms_energy': avg_rms,
+            'mfcc_features': avg_mfccs
+        }
+    
+    def _analyze_chroma_features(self, y: np.ndarray, sr: int) -> Dict[str, Any]:
+        """
+        Analyze chroma features (tonal content).
+        
+        Args:
+            y: Audio time series
+            sr: Sample rate
+            
+        Returns:
+            Dictionary with chroma analysis results
+        """
+        # Compute chromagram
+        chroma = librosa.feature.chroma_cqt(y=y, sr=sr)
+        
+        # Average values for each pitch class
+        avg_chroma = [float(np.mean(pitch)) for pitch in chroma]
+        
+        # Get the dominant pitch class (0=C, 1=C#, ..., 11=B)
+        dominant_pitch_idx = int(np.argmax(avg_chroma))
+        pitch_names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+        dominant_pitch = pitch_names[dominant_pitch_idx]
+        
+        # Calculate tonal strength (max chroma value)
+        tonal_strength = float(np.max(avg_chroma))
+        
+        # Calculate tonal spread (entropy of distribution)
+        normalized_chroma = np.array(avg_chroma) / np.sum(avg_chroma)
+        tonal_spread = float(-np.sum(normalized_chroma * np.log2(normalized_chroma + 1e-10)))
+        
+        return {
+            'chroma_features': avg_chroma,
+            'dominant_pitch': dominant_pitch,
+            'dominant_pitch_idx': dominant_pitch_idx,
+            'tonal_strength': tonal_strength,
+            'tonal_spread': tonal_spread
+        }
+    
     def get_config_schema(self) -> Dict[str, Any]:
         """
         Get JSON schema for plugin configuration.
@@ -550,6 +925,7 @@ class AudioAnalyzerPlugin(MediaAnalyzerPlugin):
         return {
             "type": "object",
             "properties": {
+                # Waveform visualization settings
                 "waveform_enabled": {
                     "type": "boolean",
                     "title": "Enable Waveform Generation",
@@ -593,6 +969,40 @@ class AudioAnalyzerPlugin(MediaAnalyzerPlugin):
                     "default": 100,
                     "minimum": 72,
                     "maximum": 300
+                },
+                
+                # Advanced audio analysis settings
+                "tempo_enabled": {
+                    "type": "boolean",
+                    "title": "Enable Tempo Analysis",
+                    "description": "Enable tempo and beat detection analysis",
+                    "default": True
+                },
+                "spectral_enabled": {
+                    "type": "boolean",
+                    "title": "Enable Spectral Analysis",
+                    "description": "Enable spectral feature analysis",
+                    "default": True
+                },
+                "chroma_enabled": {
+                    "type": "boolean",
+                    "title": "Enable Chroma Analysis",
+                    "description": "Enable chroma feature (tonal content) analysis",
+                    "default": True
+                },
+                "mfcc_count": {
+                    "type": "integer",
+                    "title": "MFCC Count",
+                    "description": "Number of Mel-frequency cepstral coefficients to extract",
+                    "default": 13,
+                    "minimum": 5,
+                    "maximum": 40
+                },
+                "use_librosa_waveform": {
+                    "type": "boolean",
+                    "title": "Use Librosa for Waveforms",
+                    "description": "Use librosa for generating higher quality waveforms (requires more processing power)",
+                    "default": True
                 }
             }
         }

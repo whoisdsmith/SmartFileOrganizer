@@ -1,0 +1,3 @@
+Mock waveform visualization for test_files/test_audio.wav
+This is a placeholder for the actual waveform visualization.
+In the full implementation, this would be a PNG image.

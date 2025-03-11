@@ -108,3 +108,7 @@ mutagen
 pydub
 SpeechRecognition
 scipy
+librosa
+librosa
+matplotlib
+numpy

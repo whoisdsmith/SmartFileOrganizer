@@ -72,9 +72,64 @@ def test_audio_analyzer(audio_path):
         if result['preview_path']:
             logger.info(f"Waveform generated: {result['preview_path']}")
         
+        # Test advanced audio analysis features (if available)
+        logger.info("Testing advanced audio analysis features...")
+        test_advanced_audio_analysis(plugin, audio_path)
+        
         return True
     else:
         logger.error(f"Audio analysis failed: {result['error']}")
+        return False
+        
+def test_advanced_audio_analysis(plugin, audio_path):
+    """Test the advanced audio analysis features."""
+    try:
+        # Check if librosa is available
+        librosa_available = False
+        try:
+            # noinspection PyUnresolvedReferences
+            import librosa
+            librosa_available = True
+        except ImportError:
+            logger.warning("Librosa not available. Skipping advanced audio analysis tests.")
+            return
+            
+        if not librosa_available:
+            return
+            
+        logger.info("Running advanced audio analysis...")
+        advanced_features = plugin.analyze_audio_features(audio_path)
+        
+        if advanced_features.get('success', False):
+            logger.info("Advanced audio analysis successful!")
+            
+            # Display the most interesting features
+            logger.info(f"Tempo (BPM): {advanced_features.get('tempo')}")
+            logger.info(f"Beat count: {advanced_features.get('beat_count')}")
+            logger.info(f"Beat regularity: {advanced_features.get('beat_regularity')}")
+            logger.info(f"Dominant pitch: {advanced_features.get('dominant_pitch')}")
+            logger.info(f"Tonal strength: {advanced_features.get('tonal_strength')}")
+            logger.info(f"Spectral centroid: {advanced_features.get('spectral_centroid')}")
+            logger.info(f"RMS energy: {advanced_features.get('rms_energy')}")
+            
+            # Check if at least some features were successfully analyzed
+            success = any([
+                advanced_features.get('tempo') is not None,
+                advanced_features.get('beat_count') is not None,
+                advanced_features.get('spectral_centroid') is not None
+            ])
+            
+            if success:
+                logger.info("Advanced audio analysis features detected!")
+                return True
+            else:
+                logger.warning("Advanced audio analysis returned success but no features were found.")
+                return False
+        else:
+            logger.warning(f"Advanced audio analysis failed: {advanced_features.get('error')}")
+            return False
+    except Exception as e:
+        logger.error(f"Error testing advanced audio analysis: {e}")
         return False
 
 def test_video_analyzer(video_path):

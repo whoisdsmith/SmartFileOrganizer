@@ -1,60 +1,47 @@
 """
 Plugin Base Module for AI Document Organizer V2.
 
-This module defines the base plugin classes that all plugins must inherit from.
+This module defines the base classes for the plugin system,
+providing a flexible architecture for extending functionality.
 """
 
-import os
 import logging
 from abc import ABC, abstractmethod
-from typing import Dict, List, Any, Optional, Set, Type, Tuple, Union
+from typing import Dict, List, Any, Optional, Tuple, Union, TYPE_CHECKING
 
-logger = logging.getLogger("AIDocumentOrganizerV2.PluginBase")
+if TYPE_CHECKING:
+    from .settings import SettingsManager
 
-class BasePlugin(ABC):
+logger = logging.getLogger(__name__)
+
+class PluginBase(ABC):
     """
-    Base class for all plugins.
+    Base class for all plugins in the AI Document Organizer.
     
-    All plugins must inherit from this class and implement required methods.
+    This abstract class defines the common interface and functionality
+    that all plugins must implement, ensuring consistency across
+    different plugin types.
     """
     
-    # Plugin type identifier (must be set by subclasses)
-    plugin_type = None
+    # Class attributes that should be overridden by subclasses
+    plugin_name = "base_plugin"
+    plugin_description = "Base plugin class"
+    plugin_version = "1.0.0"
+    plugin_type = "base"
     
-    # Plugin metadata (can be overridden by subclasses)
-    name = "Unknown Plugin"
-    version = "1.0.0"
-    description = ""
-    author = "Unknown"
-    dependencies = []
-    
-    def __init__(self, plugin_id: str, name: Optional[str] = None, version: Optional[str] = None, 
-                 description: Optional[str] = None):
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
         """
-        Initialize the plugin.
+        Initialize the plugin with optional configuration.
         
         Args:
-            plugin_id: Unique identifier for the plugin
-            name: Plugin name (if None, uses class attribute)
-            version: Plugin version (if None, uses class attribute)
-            description: Plugin description (if None, uses class attribute)
+            config: Optional configuration dictionary
         """
-        self.plugin_id = plugin_id
-        self.name = name or self.__class__.name
-        self.version = version or self.__class__.version
-        self.description = description or self.__class__.description
-        self.enabled = True
-        self._config = {}
-        # Will be set by PluginManager during registration
-        self.settings_manager = None
-        
-        logger.debug(f"Initialized plugin {self.name} ({self.plugin_id})")
+        self.config = config or {}
+        self.settings_manager: Optional['SettingsManager'] = None
     
     def initialize(self) -> bool:
         """
-        Initialize the plugin. Called after plugin is loaded.
-        
-        Subclasses can override this to perform initialization tasks.
+        Initialize the plugin. Override this method for custom initialization.
         
         Returns:
             True if initialization was successful, False otherwise
@@ -63,425 +50,81 @@ class BasePlugin(ABC):
     
     def shutdown(self) -> bool:
         """
-        Shutdown the plugin. Called before plugin is unloaded.
-        
-        Subclasses can override this to perform cleanup tasks.
+        Shutdown the plugin and release resources. Override this method
+        for custom shutdown logic.
         
         Returns:
             True if shutdown was successful, False otherwise
         """
         return True
     
-    def get_config(self) -> Dict[str, Any]:
+    def get_info(self) -> Dict[str, Any]:
         """
-        Get plugin configuration.
+        Get information about the plugin.
         
         Returns:
-            Dictionary with plugin configuration
+            Dictionary with plugin information
         """
-        return self._config.copy()
+        return {
+            "name": self.plugin_name,
+            "description": self.plugin_description,
+            "version": self.plugin_version,
+            "type": self.plugin_type
+        }
     
-    def set_config(self, config: Dict[str, Any]) -> bool:
+    def is_compatible(self, version: str) -> bool:
         """
-        Set plugin configuration.
+        Check if the plugin is compatible with a specific version.
         
         Args:
-            config: Dictionary with plugin configuration
+            version: Version string to check compatibility with
             
         Returns:
-            True if configuration was set successfully, False otherwise
+            True if compatible, False otherwise
         """
-        self._config = config.copy()
+        # Basic implementation - should be overridden for version-specific checks
         return True
     
-    def get_config_schema(self) -> Dict[str, Any]:
+    def configure(self, config: Dict[str, Any]) -> bool:
         """
-        Get JSON schema for plugin configuration.
-        
-        Returns:
-            Dictionary with JSON schema for plugin configuration
-        """
-        # Default implementation returns empty schema
-        return {
-            "type": "object",
-            "properties": {},
-            "required": []
-        }
-    
-    def get_metadata(self) -> Dict[str, Any]:
-        """
-        Get plugin metadata.
-        
-        Returns:
-            Dictionary with plugin metadata
-        """
-        return {
-            "id": self.plugin_id,
-            "type": self.plugin_type,
-            "name": self.name,
-            "version": self.version,
-            "description": self.description,
-            "author": getattr(self.__class__, "author", "Unknown"),
-            "dependencies": getattr(self.__class__, "dependencies", []),
-            "enabled": self.enabled
-        }
-    
-    def __str__(self) -> str:
-        return f"{self.name} ({self.plugin_id}) v{self.version}"
-        
-    def get_setting(self, key: str, default: Any = None) -> Any:
-        """
-        Get a setting value from the settings manager.
+        Configure the plugin with new settings.
         
         Args:
-            key: Setting key (can use dot notation for nested settings)
-            default: Default value if setting doesn't exist
+            config: Configuration dictionary
             
         Returns:
-            Setting value or default if not found
+            True if configuration was successful, False otherwise
         """
-        if self.settings_manager is None:
-            logger.warning(f"No settings manager available for plugin {self.name}")
-            return default
-        
-        return self.settings_manager.get_setting(key, default)
-        
-    def set_setting(self, key: str, value: Any) -> bool:
+        self.config.update(config)
+        return True
+    
+    def get_config(self) -> Dict[str, Any]:
         """
-        Set a setting value in the settings manager.
+        Get the current plugin configuration.
+        
+        Returns:
+            Dictionary with current configuration
+        """
+        return self.config
+    
+    def get_default_config(self) -> Dict[str, Any]:
+        """
+        Get the default plugin configuration.
+        
+        Returns:
+            Dictionary with default configuration values
+        """
+        return {}
+    
+    def validate_config(self, config: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+        """
+        Validate a configuration dictionary.
         
         Args:
-            key: Setting key (can use dot notation for nested settings)
-            value: Value to set
+            config: Configuration dictionary to validate
             
         Returns:
-            True if successful, False otherwise
+            Tuple of (is_valid, error_message)
         """
-        if self.settings_manager is None:
-            logger.warning(f"No settings manager available for plugin {self.name}")
-            return False
-        
-        return self.settings_manager.set_setting(key, value)
-
-
-class FileParserPlugin(BasePlugin):
-    """
-    Base class for file parser plugins.
-    
-    File parser plugins are responsible for parsing different file types and
-    extracting text content and metadata.
-    """
-    
-    plugin_type = "file_parser"
-    
-    # List of supported file extensions (must be set by subclasses)
-    supported_extensions = []
-    
-    def __init__(self, plugin_id: str, name: Optional[str] = None, version: Optional[str] = None,
-                 description: Optional[str] = None):
-        """
-        Initialize the file parser plugin.
-        
-        Args:
-            plugin_id: Unique identifier for the plugin
-            name: Plugin name (if None, uses class attribute)
-            version: Plugin version (if None, uses class attribute)
-            description: Plugin description (if None, uses class attribute)
-        """
-        super().__init__(plugin_id, name, version, description)
-        
-        # Make sure subclasses set supported_extensions
-        if not hasattr(self.__class__, "supported_extensions") or not self.__class__.supported_extensions:
-            self.supported_extensions = []
-            logger.warning(f"Plugin {self.name} does not define supported_extensions")
-        else:
-            self.supported_extensions = self.__class__.supported_extensions
-    
-    @abstractmethod
-    def parse_file(self, file_path: str) -> Dict[str, Any]:
-        """
-        Parse a file and extract content and metadata.
-        
-        Args:
-            file_path: Path to the file to parse
-            
-        Returns:
-            Dictionary containing:
-            - 'content': Extracted text content
-            - 'metadata': Dictionary with file metadata
-            - 'success': Boolean indicating success/failure
-            - 'error': Error message if parsing failed
-        """
-        pass
-    
-    def can_parse(self, file_path: str) -> bool:
-        """
-        Check if this plugin can parse the given file.
-        
-        Args:
-            file_path: Path to the file to check
-            
-        Returns:
-            True if this plugin can parse the file, False otherwise
-        """
-        _, ext = os.path.splitext(file_path)
-        return ext.lower() in [x.lower() for x in self.supported_extensions]
-
-
-class AIAnalyzerPlugin(BasePlugin):
-    """
-    Base class for AI analyzer plugins.
-    
-    AI analyzer plugins are responsible for analyzing document content
-    using different AI models.
-    """
-    
-    plugin_type = "ai_analyzer"
-    
-    def __init__(self, plugin_id: str, name: Optional[str] = None, version: Optional[str] = None,
-                 description: Optional[str] = None):
-        """
-        Initialize the AI analyzer plugin.
-        
-        Args:
-            plugin_id: Unique identifier for the plugin
-            name: Plugin name (if None, uses class attribute)
-            version: Plugin version (if None, uses class attribute)
-            description: Plugin description (if None, uses class attribute)
-        """
-        super().__init__(plugin_id, name, version, description)
-    
-    @abstractmethod
-    def analyze_content(self, text: str, file_type: str) -> Dict[str, Any]:
-        """
-        Analyze document content using AI.
-        
-        Args:
-            text: Document text content
-            file_type: Type of document (e.g., 'txt', 'pdf', 'docx')
-            
-        Returns:
-            Dictionary with analysis results
-        """
-        pass
-    
-    def get_available_models(self) -> List[str]:
-        """
-        Get list of available AI models.
-        
-        Returns:
-            List of model names
-        """
-        return []
-    
-    def set_model(self, model_name: str) -> bool:
-        """
-        Set the AI model to use.
-        
-        Args:
-            model_name: Name of the model to use
-            
-        Returns:
-            True if successful, False otherwise
-        """
-        return False
-
-
-class OrganizerPlugin(BasePlugin):
-    """
-    Base class for organizer plugins.
-    
-    Organizer plugins are responsible for organizing files based on
-    AI analysis and user preferences.
-    """
-    
-    plugin_type = "organizer"
-    
-    def __init__(self, plugin_id: str, name: Optional[str] = None, version: Optional[str] = None,
-                 description: Optional[str] = None):
-        """
-        Initialize the organizer plugin.
-        
-        Args:
-            plugin_id: Unique identifier for the plugin
-            name: Plugin name (if None, uses class attribute)
-            version: Plugin version (if None, uses class attribute)
-            description: Plugin description (if None, uses class attribute)
-        """
-        super().__init__(plugin_id, name, version, description)
-    
-    @abstractmethod
-    def organize_files(self, analyzed_files: List[Dict[str, Any]], target_dir: str,
-                      callback: Optional[callable] = None, options: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """
-        Organize files based on AI analysis.
-        
-        Args:
-            analyzed_files: List of file dictionaries with analysis results
-            target_dir: Target directory for organized files
-            callback: Optional callback function for progress updates
-            options: Optional dictionary with organization options
-            
-        Returns:
-            Dictionary with organization results
-        """
-        pass
-
-
-class MediaAnalyzerPlugin(BasePlugin):
-    """
-    Base class for media analyzer plugins.
-    
-    Media analyzer plugins are responsible for analyzing audio/video files,
-    extracting metadata, and generating previews or thumbnails.
-    """
-    
-    plugin_type = "media_analyzer"
-    
-    # List of supported file extensions (must be set by subclasses)
-    supported_extensions = []
-    
-    def __init__(self, plugin_id: str, name: Optional[str] = None, version: Optional[str] = None,
-                 description: Optional[str] = None):
-        """
-        Initialize the media analyzer plugin.
-        
-        Args:
-            plugin_id: Unique identifier for the plugin
-            name: Plugin name (if None, uses class attribute)
-            version: Plugin version (if None, uses class attribute)
-            description: Plugin description (if None, uses class attribute)
-        """
-        super().__init__(plugin_id, name, version, description)
-        
-        # Make sure subclasses set supported_extensions
-        if not hasattr(self.__class__, "supported_extensions") or not self.__class__.supported_extensions:
-            self.supported_extensions = []
-            logger.warning(f"Plugin {self.name} does not define supported_extensions")
-        else:
-            self.supported_extensions = self.__class__.supported_extensions
-    
-    @abstractmethod
-    def analyze_media(self, file_path: str) -> Dict[str, Any]:
-        """
-        Analyze a media file and extract content and metadata.
-        
-        Args:
-            file_path: Path to the file to analyze
-            
-        Returns:
-            Dictionary containing:
-            - 'metadata': Dictionary with media metadata
-            - 'preview_path': Path to generated preview/thumbnail (if any)
-            - 'transcription': Transcription results (if available)
-            - 'success': Boolean indicating success/failure
-            - 'error': Error message if analysis failed
-        """
-        pass
-    
-    def can_analyze(self, file_path: str) -> bool:
-        """
-        Check if this plugin can analyze the given file.
-        
-        Args:
-            file_path: Path to the file to check
-            
-        Returns:
-            True if this plugin can analyze the file, False otherwise
-        """
-        _, ext = os.path.splitext(file_path)
-        return ext.lower() in [x.lower() for x in self.supported_extensions]
-    
-    def generate_preview(self, file_path: str, output_path: Optional[str] = None) -> Optional[str]:
-        """
-        Generate a preview or thumbnail for the media file.
-        
-        Args:
-            file_path: Path to the media file
-            output_path: Optional path to save the preview
-            
-        Returns:
-            Path to the generated preview or None if generation failed
-        """
-        return None
-
-
-class TranscriptionPlugin(BasePlugin):
-    """
-    Base class for transcription service plugins.
-    
-    Transcription plugins provide speech-to-text capabilities for
-    audio and video files.
-    """
-    
-    plugin_type = "transcription"
-    
-    def __init__(self, plugin_id: str, name: Optional[str] = None, version: Optional[str] = None,
-                 description: Optional[str] = None):
-        """
-        Initialize the transcription plugin.
-        
-        Args:
-            plugin_id: Unique identifier for the plugin
-            name: Plugin name (if None, uses class attribute)
-            version: Plugin version (if None, uses class attribute)
-            description: Plugin description (if None, uses class attribute)
-        """
-        super().__init__(plugin_id, name, version, description)
-    
-    @abstractmethod
-    def transcribe(self, audio_path: str, language: str = 'en-US', 
-                   options: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """
-        Transcribe audio content.
-        
-        Args:
-            audio_path: Path to the audio file
-            language: Language code for transcription
-            options: Optional dictionary with transcription options
-            
-        Returns:
-            Dictionary containing transcription results:
-            - 'text': Full transcription text
-            - 'segments': List of time-aligned segments (if available)
-            - 'confidence': Overall confidence score (0-1)
-            - 'language': Detected or specified language
-            - 'success': Boolean indicating success/failure
-            - 'error': Error message if transcription failed
-        """
-        pass
-    
-    def get_supported_languages(self) -> List[Dict[str, str]]:
-        """
-        Get list of supported languages.
-        
-        Returns:
-            List of dictionaries with language information:
-            - 'code': Language code (e.g., 'en-US')
-            - 'name': Language name (e.g., 'English (US)')
-        """
-        return []
-
-
-class UtilityPlugin(BasePlugin):
-    """
-    Base class for utility plugins.
-    
-    Utility plugins provide additional functionality that doesn't fit into
-    other plugin categories.
-    """
-    
-    plugin_type = "utility"
-    
-    def __init__(self, plugin_id: str, name: Optional[str] = None, version: Optional[str] = None,
-                 description: Optional[str] = None):
-        """
-        Initialize the utility plugin.
-        
-        Args:
-            plugin_id: Unique identifier for the plugin
-            name: Plugin name (if None, uses class attribute)
-            version: Plugin version (if None, uses class attribute)
-            description: Plugin description (if None, uses class attribute)
-        """
-        super().__init__(plugin_id, name, version, description)
+        # Basic implementation - should be overridden for specific validation
+        return True, None

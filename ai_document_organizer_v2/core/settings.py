@@ -1,98 +1,42 @@
 """
 Settings Manager Module for AI Document Organizer V2.
 
-This module provides functionality to load, save, and manage application settings.
+This module provides a central settings management system for the application,
+allowing for persistent configuration across sessions and components.
 """
 
 import os
 import json
 import logging
 from typing import Dict, Any, Optional, List, Union
+from pathlib import Path
 
-logger = logging.getLogger("AIDocumentOrganizerV2.Settings")
+logger = logging.getLogger(__name__)
 
 class SettingsManager:
     """
-    Class for managing application settings.
+    Manages application settings and configuration.
     
-    This class provides functionality to:
-    - Load settings from a file
-    - Save settings to a file
-    - Manage settings with dot notation access
-    - Provide defaults for missing settings
+    This class provides methods for loading, saving, and accessing application
+    settings from a JSON file, with support for plugin-specific settings.
     """
+    
+    DEFAULT_SETTINGS_FILE = "settings.json"
     
     def __init__(self, settings_file: Optional[str] = None):
         """
         Initialize the settings manager.
         
         Args:
-            settings_file: Optional path to the settings file. If None, uses default location.
+            settings_file: Optional path to the settings file
         """
-        # Use the provided settings file or default to a standard location
-        if settings_file is None:
-            self.settings_dir = os.path.join(os.path.expanduser("~"), ".ai_document_organizer")
-            os.makedirs(self.settings_dir, exist_ok=True)
-            self.settings_file = os.path.join(self.settings_dir, "settings.json")
-        else:
-            self.settings_file = settings_file
-            self.settings_dir = os.path.dirname(os.path.abspath(settings_file))
-            os.makedirs(self.settings_dir, exist_ok=True)
-        
-        # Default settings
-        self.settings = self._get_default_settings()
-        
-        # Load settings from file if it exists
+        self.settings_file = settings_file or SettingsManager.DEFAULT_SETTINGS_FILE
+        self._settings = {}
         self._load_settings()
-    
-    def _get_default_settings(self) -> Dict[str, Any]:
-        """
-        Get default settings.
-        
-        Returns:
-            Dictionary with default settings
-        """
-        return {
-            "version": "2.0.0",
-            "last_source_dir": os.path.expanduser("~/Documents"),
-            "last_target_dir": os.path.expanduser("~/Documents/Organized"),
-            "theme": "default",
-            "plugins": {
-                "enabled_plugins": [],
-                "plugin_settings": {}
-            },
-            "batch_processing": {
-                "batch_size": 10,
-                "batch_delay": 0.1,
-                "use_process_pool": True,
-                "adaptive_workers": True,
-                "max_workers": 4,
-                "memory_limit_percent": 80,
-                "enable_pause_resume": True,
-                "save_job_state": True
-            },
-            "file_organization": {
-                "create_category_folders": True,
-                "generate_summaries": True,
-                "include_metadata": True,
-                "copy_instead_of_move": True,
-                "detect_duplicates": False,
-                "duplicate_action": "report",
-                "duplicate_strategy": "newest",
-                "apply_tags": False,
-                "suggest_tags": False
-            },
-            "ai_service": {
-                "provider": "google",
-                "google_model": "models/gemini-2.0-flash",
-                "openai_model": "gpt-4-turbo-preview",
-                "request_rate_limit": 30
-            }
-        }
     
     def _load_settings(self) -> bool:
         """
-        Load settings from file.
+        Load settings from the settings file.
         
         Returns:
             True if settings were loaded successfully, False otherwise
@@ -100,197 +44,377 @@ class SettingsManager:
         try:
             if os.path.exists(self.settings_file):
                 with open(self.settings_file, 'r', encoding='utf-8') as f:
-                    loaded_settings = json.load(f)
-                
-                # Update default settings with loaded values
-                self._update_dict_recursive(self.settings, loaded_settings)
-                logger.debug(f"Settings loaded from {self.settings_file}")
+                    self._settings = json.load(f)
+                logger.info(f"Settings loaded from {self.settings_file}")
                 return True
             else:
-                logger.info("Settings file not found, using defaults")
-                self.save_settings()  # Create the settings file
+                logger.info(f"Settings file {self.settings_file} not found, using defaults")
+                self._settings = self._get_default_settings()
                 return False
         except Exception as e:
             logger.error(f"Error loading settings: {e}")
-            # Save current settings to repair corrupted file
-            self.save_settings()
+            self._settings = self._get_default_settings()
             return False
     
     def save_settings(self) -> bool:
         """
-        Save settings to file.
+        Save settings to the settings file.
         
         Returns:
             True if settings were saved successfully, False otherwise
         """
         try:
+            # Create directory if it doesn't exist
+            os.makedirs(os.path.dirname(os.path.abspath(self.settings_file)), exist_ok=True)
+            
             with open(self.settings_file, 'w', encoding='utf-8') as f:
-                json.dump(self.settings, f, indent=2)
-            logger.info(f"Saved settings to {self.settings_file}")
+                json.dump(self._settings, f, indent=2)
+            logger.info(f"Settings saved to {self.settings_file}")
             return True
         except Exception as e:
             logger.error(f"Error saving settings: {e}")
             return False
     
-    def _update_dict_recursive(self, target: Dict, source: Dict) -> None:
+    def _get_default_settings(self) -> Dict[str, Any]:
         """
-        Update target dictionary with values from source dictionary recursively.
+        Get default settings.
         
-        Args:
-            target: Target dictionary to update
-            source: Source dictionary with new values
+        Returns:
+            Dictionary containing default settings
         """
-        for key, value in source.items():
-            if key in target and isinstance(target[key], dict) and isinstance(value, dict):
-                self._update_dict_recursive(target[key], value)
-            else:
-                target[key] = value
+        return {
+            "general": {
+                "theme": "system",
+                "language": "en",
+                "debug_mode": False,
+                "auto_update": True,
+                "startup_check": True,
+                "max_threads": 4,
+                "memory_limit_mb": 1024,
+                "log_level": "INFO"
+            },
+            "file_analyzer": {
+                "batch_size": 10,
+                "batch_delay": 0.1,
+                "exclude_hidden": True,
+                "exclude_system": True,
+                "exclude_extensions": [".tmp", ".bak", ".swp"],
+                "max_file_size_mb": 100,
+                "analyze_content": True,
+                "generate_thumbnails": True,
+                "thumbnail_size": 256
+            },
+            "ai_services": {
+                "primary_service": "google",
+                "google_api_key": "",
+                "openai_api_key": "",
+                "azure_api_key": "",
+                "model_name": "models/gemini-1.5-pro",
+                "max_tokens": 1024,
+                "temperature": 0.7,
+                "enable_content_safety": True
+            },
+            "organizer": {
+                "create_category_folders": True,
+                "generate_summaries": True,
+                "include_metadata": True,
+                "copy_instead_of_move": True,
+                "handle_duplicates": "ask",
+                "apply_tags": False,
+                "suggest_tags": False,
+                "folder_structure": "category/date"
+            },
+            "media": {
+                "extract_audio_from_video": True,
+                "generate_video_thumbnails": True,
+                "generate_audio_waveforms": True,
+                "video_thumbnail_interval": 10,
+                "audio_analysis_detail": "medium",
+                "transcribe_audio": False,
+                "transcription_service": "whisper",
+                "max_audio_duration": 600,
+                "max_video_duration": 3600
+            },
+            "database": {
+                "connector": "sqlite",
+                "sqlite": {
+                    "database_path": "document_organizer.db",
+                    "create_db_dir": True,
+                    "timeout": 5.0
+                },
+                "mysql": {
+                    "host": "localhost",
+                    "port": 3306,
+                    "database": "document_organizer",
+                    "user": "",
+                    "password": "",
+                    "charset": "utf8mb4"
+                },
+                "postgresql": {
+                    "host": "localhost",
+                    "port": 5432,
+                    "database": "document_organizer",
+                    "user": "",
+                    "password": "",
+                    "sslmode": "prefer"
+                },
+                "mongodb": {
+                    "uri": "mongodb://localhost:27017/",
+                    "database": "document_organizer",
+                    "collection_prefix": "doc_org_"
+                }
+            },
+            "cloud_storage": {
+                "provider": "google_drive",
+                "google_drive": {
+                    "credentials_file": "credentials.json",
+                    "token_file": "token.json",
+                    "client_id": "",
+                    "client_secret": "",
+                    "scopes": ["https://www.googleapis.com/auth/drive"],
+                    "cache_size_mb": 100,
+                    "upload_chunk_size_mb": 5,
+                    "download_chunk_size_mb": 5
+                },
+                "onedrive": {
+                    "client_id": "",
+                    "client_secret": "",
+                    "redirect_uri": "http://localhost:8000/callback",
+                    "scopes": ["Files.ReadWrite.All"],
+                    "token_file": "onedrive_token.json"
+                },
+                "dropbox": {
+                    "app_key": "",
+                    "app_secret": "",
+                    "refresh_token": "",
+                    "token_file": "dropbox_token.json"
+                },
+                "s3": {
+                    "access_key": "",
+                    "secret_key": "",
+                    "region": "us-east-1",
+                    "bucket": "document-organizer",
+                    "endpoint_url": ""
+                }
+            },
+            "plugins": {
+                "enabled_plugins": [],
+                "plugin_directory": "plugins"
+            }
+        }
     
-    def get_setting(self, key_path: str, default: Any = None) -> Any:
+    def get_all_settings(self) -> Dict[str, Any]:
         """
-        Get a setting value using dot notation.
+        Get all settings.
+        
+        Returns:
+            Dictionary containing all settings
+        """
+        return self._settings
+    
+    def get_setting(self, path: str, default: Any = None) -> Any:
+        """
+        Get a setting value using a dot-separated path.
         
         Args:
-            key_path: Setting key path using dot notation (e.g., "plugins.enabled_plugins")
-            default: Default value to return if setting not found
+            path: Dot-separated path to the setting (e.g., "general.theme")
+            default: Default value to return if the setting is not found
             
         Returns:
             Setting value or default if not found
         """
-        keys = key_path.split('.')
-        value = self.settings
+        parts = path.split('.')
         
-        try:
-            for key in keys:
-                value = value[key]
-            return value
-        except (KeyError, TypeError):
-            return default
+        # Start with the root settings dictionary
+        current = self._settings
+        
+        # Traverse the path
+        for part in parts:
+            if isinstance(current, dict) and part in current:
+                current = current[part]
+            else:
+                return default
+        
+        return current
     
-    def set_setting(self, key_path: str, value: Any) -> bool:
+    def set_setting(self, path: str, value: Any) -> bool:
         """
-        Set a setting value using dot notation.
+        Set a setting value using a dot-separated path.
         
         Args:
-            key_path: Setting key path using dot notation (e.g., "plugins.enabled_plugins")
+            path: Dot-separated path to the setting (e.g., "general.theme")
             value: Value to set
             
         Returns:
-            True if setting was set successfully, False otherwise
+            True if the setting was set successfully, False otherwise
         """
-        keys = key_path.split('.')
-        target = self.settings
+        parts = path.split('.')
         
-        try:
-            # Navigate to the innermost dictionary
-            for key in keys[:-1]:
-                if key not in target:
-                    target[key] = {}
-                target = target[key]
-            
-            # Set the value
-            target[keys[-1]] = value
-            return True
-        except Exception as e:
-            logger.error(f"Error setting {key_path}: {e}")
-            return False
+        # Start with the root settings dictionary
+        current = self._settings
+        
+        # Traverse the path, creating dictionaries as needed
+        for i, part in enumerate(parts[:-1]):
+            if part not in current or not isinstance(current[part], dict):
+                current[part] = {}
+            current = current[part]
+        
+        # Set the value
+        current[parts[-1]] = value
+        return True
     
-    def get_plugin_setting(self, plugin_id: str, key: str, default: Any = None) -> Any:
+    def delete_setting(self, path: str) -> bool:
         """
-        Get a plugin-specific setting.
+        Delete a setting using a dot-separated path.
         
         Args:
-            plugin_id: Plugin identifier
-            key: Setting key
-            default: Default value if setting not found
+            path: Dot-separated path to the setting (e.g., "general.theme")
             
         Returns:
-            Setting value or default if not found
+            True if the setting was deleted successfully, False otherwise
         """
-        plugin_settings = self.settings.get("plugins", {}).get("plugin_settings", {})
-        if plugin_id in plugin_settings and key in plugin_settings[plugin_id]:
-            return plugin_settings[plugin_id][key]
-        return default
+        parts = path.split('.')
+        
+        # Start with the root settings dictionary
+        current = self._settings
+        
+        # Traverse the path
+        for i, part in enumerate(parts[:-1]):
+            if isinstance(current, dict) and part in current:
+                current = current[part]
+            else:
+                return False
+        
+        # Delete the setting
+        if isinstance(current, dict) and parts[-1] in current:
+            del current[parts[-1]]
+            return True
+        else:
+            return False
     
-    def set_plugin_setting(self, plugin_id: str, key: str, value: Any) -> bool:
+    def get_plugin_settings(self, plugin_name: str) -> Dict[str, Any]:
         """
-        Set a plugin-specific setting.
+        Get settings for a specific plugin.
         
         Args:
-            plugin_id: Plugin identifier
+            plugin_name: Name of the plugin
+            
+        Returns:
+            Dictionary containing plugin settings
+        """
+        plugin_settings = self.get_setting(f"plugins.{plugin_name}", {})
+        
+        if not plugin_settings:
+            # Create a new empty settings dictionary for this plugin
+            self.set_setting(f"plugins.{plugin_name}", {})
+            plugin_settings = {}
+        
+        return plugin_settings
+    
+    def set_plugin_setting(self, plugin_name: str, key: str, value: Any) -> bool:
+        """
+        Set a setting for a specific plugin.
+        
+        Args:
+            plugin_name: Name of the plugin
             key: Setting key
             value: Setting value
             
         Returns:
-            True if setting was set successfully, False otherwise
+            True if the setting was set successfully, False otherwise
         """
-        if "plugins" not in self.settings:
-            self.settings["plugins"] = {}
-        
-        if "plugin_settings" not in self.settings["plugins"]:
-            self.settings["plugins"]["plugin_settings"] = {}
-        
-        if plugin_id not in self.settings["plugins"]["plugin_settings"]:
-            self.settings["plugins"]["plugin_settings"][plugin_id] = {}
-        
-        self.settings["plugins"]["plugin_settings"][plugin_id][key] = value
-        return True
+        return self.set_setting(f"plugins.{plugin_name}.{key}", value)
     
-    def get_enabled_plugins(self) -> List[str]:
+    def get_plugin_setting(self, plugin_name: str, key: str, default: Any = None) -> Any:
         """
-        Get list of enabled plugin IDs.
-        
-        Returns:
-            List of enabled plugin IDs
-        """
-        return self.settings.get("plugins", {}).get("enabled_plugins", [])
-    
-    def enable_plugin(self, plugin_id: str) -> bool:
-        """
-        Enable a plugin.
+        Get a setting for a specific plugin.
         
         Args:
-            plugin_id: Plugin identifier
+            plugin_name: Name of the plugin
+            key: Setting key
+            default: Default value to return if the setting is not found
             
         Returns:
-            True if plugin was enabled successfully, False otherwise
+            Setting value or default if not found
         """
-        if "plugins" not in self.settings:
-            self.settings["plugins"] = {}
-        
-        if "enabled_plugins" not in self.settings["plugins"]:
-            self.settings["plugins"]["enabled_plugins"] = []
-        
-        if plugin_id not in self.settings["plugins"]["enabled_plugins"]:
-            self.settings["plugins"]["enabled_plugins"].append(plugin_id)
-        
-        return True
+        return self.get_setting(f"plugins.{plugin_name}.{key}", default)
     
-    def disable_plugin(self, plugin_id: str) -> bool:
+    def reset_to_defaults(self) -> bool:
         """
-        Disable a plugin.
+        Reset all settings to their default values.
+        
+        Returns:
+            True if settings were reset successfully, False otherwise
+        """
+        self._settings = self._get_default_settings()
+        return self.save_settings()
+    
+    def import_settings(self, file_path: str) -> bool:
+        """
+        Import settings from a JSON file.
         
         Args:
-            plugin_id: Plugin identifier
+            file_path: Path to the JSON file
             
         Returns:
-            True if plugin was disabled successfully, False otherwise
+            True if settings were imported successfully, False otherwise
         """
-        if "plugins" in self.settings and "enabled_plugins" in self.settings["plugins"]:
-            if plugin_id in self.settings["plugins"]["enabled_plugins"]:
-                self.settings["plugins"]["enabled_plugins"].remove(plugin_id)
-        
-        return True
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                settings = json.load(f)
+            
+            # Merge with existing settings
+            self._merge_settings(settings)
+            
+            logger.info(f"Settings imported from {file_path}")
+            return True
+        except Exception as e:
+            logger.error(f"Error importing settings: {e}")
+            return False
     
-    def is_plugin_enabled(self, plugin_id: str) -> bool:
+    def export_settings(self, file_path: str) -> bool:
         """
-        Check if a plugin is enabled.
+        Export settings to a JSON file.
         
         Args:
-            plugin_id: Plugin identifier
+            file_path: Path to save the JSON file
             
         Returns:
-            True if the plugin is enabled, False otherwise
+            True if settings were exported successfully, False otherwise
         """
-        enabled_plugins = self.get_enabled_plugins()
-        return plugin_id in enabled_plugins
+        try:
+            # Create directory if it doesn't exist
+            os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
+            
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(self._settings, f, indent=2)
+            
+            logger.info(f"Settings exported to {file_path}")
+            return True
+        except Exception as e:
+            logger.error(f"Error exporting settings: {e}")
+            return False
+    
+    def _merge_settings(self, settings: Dict[str, Any], target: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Recursively merge settings dictionaries.
+        
+        Args:
+            settings: Settings dictionary to merge
+            target: Target dictionary (defaults to self._settings)
+            
+        Returns:
+            Merged settings dictionary
+        """
+        if target is None:
+            target = self._settings
+        
+        for key, value in settings.items():
+            if isinstance(value, dict) and isinstance(target.get(key), dict):
+                # Recursively merge nested dictionaries
+                self._merge_settings(value, target[key])
+            else:
+                # Replace or add the value
+                target[key] = value
+        
+        return target

@@ -1,384 +1,457 @@
 """
 Plugin Manager Module for AI Document Organizer V2.
 
-This module provides the plugin management system for discovering, loading, and
-managing plugins in the AI Document Organizer V2 application.
+This module provides a centralized system for discovering, loading,
+and managing plugins for the application.
 """
 
 import os
 import sys
 import importlib
-import inspect
 import logging
-import pkgutil
-from typing import Dict, List, Any, Optional, Set, Type, Tuple
+import inspect
+from typing import Dict, List, Any, Optional, Type, Set, Union
 
-from .plugin_base import BasePlugin
+from .plugin_base import PluginBase
+from .settings import SettingsManager
 
-logger = logging.getLogger("AIDocumentOrganizerV2.PluginManager")
+logger = logging.getLogger(__name__)
 
 class PluginManager:
     """
-    Manages plugin discovery, loading, initialization, and lifecycle.
+    Manages the discovery, loading, and lifecycle of plugins.
     
-    This class provides functionality to:
-    - Discover and load plugins from the plugin directory
-    - Initialize and manage plugin lifecycle
-    - Provide access to plugins by type and ID
-    - Handle plugin dependencies and conflicts
+    This class provides methods for finding, initializing, and accessing plugins
+    from various sources, with automatic dependency management.
     """
     
-    def __init__(self, settings_manager = None, plugin_dirs: Optional[List[str]] = None):
+    def __init__(self, settings_manager: Optional[SettingsManager] = None):
         """
         Initialize the plugin manager.
         
         Args:
-            settings_manager: Optional settings manager to provide to plugins.
-            plugin_dirs: Optional list of plugin directories. If None, uses default.
+            settings_manager: Optional settings manager instance
         """
-        # Store settings manager
-        self.settings_manager = settings_manager
+        self.settings_manager = settings_manager or SettingsManager()
+        self.plugins: Dict[str, PluginBase] = {}
+        self.plugin_classes: Dict[str, Type[PluginBase]] = {}
+        self.plugin_modules: Dict[str, Any] = {}
+        self.plugin_paths: List[str] = []
         
-        # Default plugin directories
-        if plugin_dirs is None:
-            # First, add the built-in plugins directory
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            self.plugin_dirs = [os.path.join(base_dir, "plugins")]
-            
-            # Then, add user plugins directory in home folder
-            user_plugins_dir = os.path.join(os.path.expanduser("~"), ".ai_document_organizer", "plugins")
-            if os.path.exists(user_plugins_dir):
-                self.plugin_dirs.append(user_plugins_dir)
-        else:
-            self.plugin_dirs = plugin_dirs
+        # Set default plugin paths
+        plugin_dir = self.settings_manager.get_setting("plugins.plugin_directory", "plugins")
+        self.add_plugin_path(plugin_dir)
         
-        # Plugin registry
-        self.plugins = {}  # plugin_id -> plugin instance
-        self.plugin_modules = {}  # plugin_id -> module
-        self.plugin_types = {}  # plugin_type -> {plugin_id -> plugin instance}
-        
-        # Keep track of plugin states
-        self.initialized_plugins = set()
-        
-        logger.debug(f"Plugin manager initialized with directories: {self.plugin_dirs}")
+        # Built-in plugin paths
+        builtin_path = os.path.join(os.path.dirname(__file__), "..", "plugins")
+        self.add_plugin_path(builtin_path)
     
-    def discover_plugins(self) -> Dict[str, Any]:
+    def add_plugin_path(self, path: str) -> bool:
         """
-        Discover and load plugins from the plugin directories.
+        Add a directory to the plugin search paths.
+        
+        Args:
+            path: Directory path to add
+            
+        Returns:
+            True if the path was added, False otherwise
+        """
+        if not os.path.exists(path):
+            # Try creating the directory
+            try:
+                os.makedirs(path, exist_ok=True)
+            except Exception as e:
+                logger.error(f"Failed to create plugin directory {path}: {e}")
+                return False
+        
+        abs_path = os.path.abspath(path)
+        if abs_path not in self.plugin_paths:
+            self.plugin_paths.append(abs_path)
+            return True
+        
+        return False
+    
+    def discover_plugins(self) -> Dict[str, Type[PluginBase]]:
+        """
+        Discover available plugins in the plugin search paths.
         
         Returns:
-            Dictionary with discovery results:
-            - 'found': Number of plugins found
-            - 'loaded': Number of plugins successfully loaded
-            - 'failed': Number of plugins that failed to load
-            - 'failures': List of dictionaries with failure information
+            Dictionary mapping plugin IDs to plugin classes
         """
-        discovered_count = 0
-        loaded_count = 0
-        failed_count = 0
-        failures = []
+        discovered_plugins = {}
         
-        for plugin_dir in self.plugin_dirs:
-            if not os.path.exists(plugin_dir):
-                logger.debug(f"Plugin directory does not exist: {plugin_dir}")
+        for path in self.plugin_paths:
+            self._discover_in_path(path, discovered_plugins)
+        
+        return discovered_plugins
+    
+    def _discover_in_path(self, path: str, discovered_plugins: Dict[str, Type[PluginBase]]) -> None:
+        """
+        Discover plugins in the specified path.
+        
+        Args:
+            path: Directory path to search in
+            discovered_plugins: Dictionary to store discovered plugins
+        """
+        if not os.path.isdir(path):
+            return
+        
+        # Add path to Python path if not already there
+        if path not in sys.path:
+            sys.path.insert(0, path)
+        
+        # Find potential plugin directories (must contain __init__.py)
+        for item in os.listdir(path):
+            item_path = os.path.join(path, item)
+            
+            # Skip non-directories and hidden directories
+            if not os.path.isdir(item_path) or item.startswith('.'):
                 continue
             
-            # Each subdirectory in the plugin directory is a potential plugin
-            for item in os.listdir(plugin_dir):
-                item_path = os.path.join(plugin_dir, item)
+            # Skip directories without __init__.py
+            if not os.path.exists(os.path.join(item_path, "__init__.py")):
+                continue
+            
+            # Try to import the package
+            try:
+                package_name = f"ai_document_organizer_v2.plugins.{item}"
+                package = importlib.import_module(package_name)
                 
-                # Skip non-directories and hidden directories
-                if not os.path.isdir(item_path) or item.startswith('.') or item == '__pycache__':
-                    continue
-                
-                # Check if this is a valid plugin package (has an __init__.py)
-                init_py = os.path.join(item_path, "__init__.py")
-                plugin_py = os.path.join(item_path, "plugin.py")
-                
-                if not (os.path.exists(init_py) or os.path.exists(plugin_py)):
-                    logger.debug(f"Skipping {item_path}: Not a valid plugin package")
-                    continue
-                
-                discovered_count += 1
-                
-                # Try to load the plugin
-                try:
-                    # Determine module path for importing
-                    rel_path = os.path.relpath(plugin_dir, os.path.dirname(base_dir))
-                    
-                    if os.path.exists(plugin_py):
-                        # Direct plugin.py file
-                        module_path = f"ai_document_organizer_v2.plugins.{item}.plugin"
-                    else:
-                        # Package with __init__.py
-                        module_path = f"ai_document_organizer_v2.plugins.{item}"
-                    
-                    # Import the module
-                    plugin_module = importlib.import_module(module_path)
-                    
-                    # Find plugin classes (subclasses of BasePlugin)
-                    plugin_classes = []
-                    for name, obj in inspect.getmembers(plugin_module):
-                        if (inspect.isclass(obj) and issubclass(obj, BasePlugin) and 
-                            obj is not BasePlugin and obj.__module__ == plugin_module.__name__):
-                            plugin_classes.append(obj)
-                    
-                    if not plugin_classes:
-                        logger.warning(f"No plugin classes found in {module_path}")
-                        failed_count += 1
-                        failures.append({
-                            'path': item_path,
-                            'error': "No plugin classes found"
-                        })
+                # Look for plugin modules in the package
+                for module_name in dir(package):
+                    if module_name.startswith('_'):
                         continue
                     
-                    # Create instances of the plugin classes
-                    for plugin_class in plugin_classes:
-                        try:
-                            plugin_type = plugin_class.plugin_type
-                            if plugin_type is None:
-                                logger.warning(f"Plugin class {plugin_class.__name__} has no plugin_type")
+                    try:
+                        module = getattr(package, module_name)
+                        
+                        # Look for plugin classes in the module
+                        for class_name in dir(module):
+                            if class_name.startswith('_'):
                                 continue
                             
-                            # Generate plugin ID if needed
-                            plugin_id = f"{plugin_type}.{item}"
-                            
-                            # Create plugin instance
-                            plugin = plugin_class(plugin_id=plugin_id, 
-                                                 name=getattr(plugin_class, 'name', plugin_class.__name__),
-                                                 version=getattr(plugin_class, 'version', '1.0.0'),
-                                                 description=getattr(plugin_class, 'description', ''))
-                            
-                            # Register the plugin
-                            self.register_plugin(plugin, plugin_module)
-                            loaded_count += 1
-                            logger.info(f"Registered plugin: {plugin.name} ({plugin.plugin_id})")
-                        except Exception as e:
-                            logger.error(f"Error creating plugin instance for {plugin_class.__name__}: {e}")
-                            failed_count += 1
-                            failures.append({
-                                'path': item_path,
-                                'error': f"Error creating plugin instance: {str(e)}"
-                            })
-                except Exception as e:
-                    logger.error(f"Error loading plugin from {item_path}: {e}")
-                    failed_count += 1
-                    failures.append({
-                        'path': item_path,
-                        'error': str(e)
-                    })
-        
-        return {
-            'found': discovered_count,
-            'loaded': loaded_count,
-            'failed': failed_count,
-            'failures': failures
-        }
+                            try:
+                                cls = getattr(module, class_name)
+                                
+                                # Check if it's a plugin class (subclass of PluginBase)
+                                if (inspect.isclass(cls) and 
+                                    issubclass(cls, PluginBase) and 
+                                    cls is not PluginBase):
+                                    
+                                    plugin_id = cls.plugin_name
+                                    discovered_plugins[plugin_id] = cls
+                                    self.plugin_classes[plugin_id] = cls
+                                    self.plugin_modules[plugin_id] = module
+                                    
+                                    logger.debug(f"Discovered plugin: {plugin_id} ({cls.__module__}.{cls.__name__})")
+                                    
+                            except Exception as class_err:
+                                logger.debug(f"Error inspecting class {class_name}: {class_err}")
+                        
+                    except Exception as module_err:
+                        logger.debug(f"Error importing module {module_name}: {module_err}")
+                
+            except Exception as package_err:
+                logger.debug(f"Error importing package {item}: {package_err}")
     
-    def register_plugin(self, plugin: BasePlugin, module=None) -> bool:
+    def load_plugin(self, plugin_id: str, config: Optional[Dict[str, Any]] = None) -> Optional[PluginBase]:
         """
-        Register a plugin with the plugin manager.
+        Load and initialize a plugin.
         
         Args:
-            plugin: Plugin instance to register
-            module: Optional module the plugin was loaded from
+            plugin_id: ID of the plugin to load
+            config: Optional configuration dictionary
             
         Returns:
-            True if registration was successful, False otherwise
+            Initialized plugin instance or None if loading failed
         """
-        if plugin.plugin_id in self.plugins:
-            logger.warning(f"Plugin ID collision: {plugin.plugin_id}")
-            return False
+        # Check if the plugin is already loaded
+        if plugin_id in self.plugins:
+            return self.plugins[plugin_id]
         
-        # Store the plugin instance
-        self.plugins[plugin.plugin_id] = plugin
+        # Check if the plugin class is known
+        if plugin_id not in self.plugin_classes:
+            # Try to discover plugins
+            self.discover_plugins()
+            
+            if plugin_id not in self.plugin_classes:
+                logger.error(f"Plugin not found: {plugin_id}")
+                return None
         
-        # Store the module if provided
-        if module is not None:
-            self.plugin_modules[plugin.plugin_id] = module
+        # Get plugin-specific configuration from settings
+        plugin_config = config or {}
+        if self.settings_manager:
+            settings_config = self.settings_manager.get_plugin_settings(plugin_id)
+            # Merge settings with provided config (provided config takes precedence)
+            merged_config = {**settings_config, **plugin_config}
+            plugin_config = merged_config
         
-        # Set the settings manager if available
-        if hasattr(plugin, 'settings_manager') and self.settings_manager is not None:
+        try:
+            # Create plugin instance
+            plugin_class = self.plugin_classes[plugin_id]
+            plugin = plugin_class(plugin_config)
+            
+            # Set settings manager
             plugin.settings_manager = self.settings_manager
-        
-        # Register by plugin type
-        plugin_type = plugin.plugin_type
-        if plugin_type not in self.plugin_types:
-            self.plugin_types[plugin_type] = {}
-        
-        self.plugin_types[plugin_type][plugin.plugin_id] = plugin
-        
-        return True
-    
-    def initialize_plugins(self) -> Dict[str, Any]:
-        """
-        Initialize all registered plugins.
-        
-        Returns:
-            Dictionary with initialization results:
-            - 'successful': Number of plugins successfully initialized
-            - 'failed': Number of plugins that failed to initialize
-            - 'failures': List of dictionaries with failure information
-        """
-        successful = 0
-        failed = 0
-        failures = []
-        
-        # Initialize all plugins
-        for plugin_id, plugin in self.plugins.items():
-            if plugin_id in self.initialized_plugins:
-                continue  # Skip already initialized plugins
             
-            try:
-                # Initialize the plugin
-                if plugin.initialize():
-                    self.initialized_plugins.add(plugin_id)
-                    successful += 1
-                    logger.debug(f"Initialized plugin: {plugin.name} ({plugin_id})")
-                else:
-                    failed += 1
-                    failures.append({
-                        'plugin_id': plugin_id,
-                        'plugin_name': plugin.name,
-                        'error': "Plugin initialize() returned False"
-                    })
-                    logger.warning(f"Plugin failed to initialize: {plugin.name} ({plugin_id})")
-            except Exception as e:
-                failed += 1
-                failures.append({
-                    'plugin_id': plugin_id,
-                    'plugin_name': plugin.name,
-                    'error': str(e)
-                })
-                logger.error(f"Error initializing plugin {plugin.name} ({plugin_id}): {e}")
-        
-        return {
-            'successful': successful,
-            'failed': failed,
-            'failures': failures
-        }
-    
-    def shutdown_plugins(self) -> Dict[str, Any]:
-        """
-        Shutdown all initialized plugins.
-        
-        Returns:
-            Dictionary with shutdown results:
-            - 'successful': Number of plugins successfully shut down
-            - 'failed': Number of plugins that failed to shut down
-            - 'failures': List of dictionaries with failure information
-        """
-        successful = 0
-        failed = 0
-        failures = []
-        
-        # Shutdown initialized plugins in reverse order
-        for plugin_id in sorted(self.initialized_plugins, reverse=True):
-            plugin = self.plugins.get(plugin_id)
-            if plugin is None:
-                continue
+            # Initialize plugin
+            if not plugin.initialize():
+                logger.error(f"Failed to initialize plugin: {plugin_id}")
+                return None
             
-            try:
-                # Shutdown the plugin
-                if plugin.shutdown():
-                    successful += 1
-                    logger.debug(f"Shutdown plugin: {plugin.name} ({plugin_id})")
-                else:
-                    failed += 1
-                    failures.append({
-                        'plugin_id': plugin_id,
-                        'plugin_name': plugin.name,
-                        'error': "Plugin shutdown() returned False"
-                    })
-                    logger.warning(f"Plugin failed to shutdown: {plugin.name} ({plugin_id})")
-            except Exception as e:
-                failed += 1
-                failures.append({
-                    'plugin_id': plugin_id,
-                    'plugin_name': plugin.name,
-                    'error': str(e)
-                })
-                logger.error(f"Error shutting down plugin {plugin.name} ({plugin_id}): {e}")
+            # Store plugin instance
+            self.plugins[plugin_id] = plugin
+            
+            logger.info(f"Loaded plugin: {plugin_id}")
+            return plugin
         
-        # Clear initialized plugins set
-        self.initialized_plugins.clear()
-        
-        return {
-            'successful': successful,
-            'failed': failed,
-            'failures': failures
-        }
+        except Exception as e:
+            logger.error(f"Error loading plugin {plugin_id}: {e}")
+            return None
     
-    def get_plugin(self, plugin_id: str) -> Optional[BasePlugin]:
+    def load_plugins(self, plugin_types: Optional[List[str]] = None, 
+                     excluded_plugins: Optional[List[str]] = None) -> Dict[str, PluginBase]:
         """
-        Get a plugin by its ID.
+        Load multiple plugins by type.
         
         Args:
-            plugin_id: Plugin ID to look up
-            
-        Returns:
-            Plugin instance or None if not found
-        """
-        return self.plugins.get(plugin_id)
-    
-    def get_plugins_of_type(self, plugin_type: str) -> Dict[str, BasePlugin]:
-        """
-        Get all plugins of a specific type.
-        
-        Args:
-            plugin_type: Plugin type to look up
+            plugin_types: Optional list of plugin types to load
+            excluded_plugins: Optional list of plugin IDs to exclude
             
         Returns:
             Dictionary mapping plugin IDs to plugin instances
         """
-        return self.plugin_types.get(plugin_type, {})
-    
-    def get_plugin_types(self) -> List[str]:
-        """
-        Get list of all registered plugin types.
+        # Discover available plugins
+        available_plugins = self.discover_plugins()
         
-        Returns:
-            List of plugin type strings
-        """
-        return list(self.plugin_types.keys())
+        excluded_plugins = excluded_plugins or []
+        loaded_plugins = {}
+        
+        # Filter plugins by type if specified
+        plugin_classes = {}
+        if plugin_types:
+            for plugin_id, plugin_class in available_plugins.items():
+                if plugin_class.plugin_type in plugin_types and plugin_id not in excluded_plugins:
+                    plugin_classes[plugin_id] = plugin_class
+        else:
+            plugin_classes = {k: v for k, v in available_plugins.items() if k not in excluded_plugins}
+        
+        # Load each plugin
+        for plugin_id in plugin_classes:
+            plugin = self.load_plugin(plugin_id)
+            if plugin:
+                loaded_plugins[plugin_id] = plugin
+        
+        return loaded_plugins
     
-    def is_plugin_initialized(self, plugin_id: str) -> bool:
+    def unload_plugin(self, plugin_id: str) -> bool:
         """
-        Check if a plugin is initialized.
+        Unload a plugin.
         
         Args:
-            plugin_id: Plugin ID to check
+            plugin_id: ID of the plugin to unload
             
         Returns:
-            True if the plugin is initialized, False otherwise
+            True if the plugin was unloaded, False otherwise
         """
-        return plugin_id in self.initialized_plugins
+        if plugin_id not in self.plugins:
+            logger.warning(f"Plugin not loaded: {plugin_id}")
+            return False
+        
+        try:
+            # Shutdown the plugin
+            plugin = self.plugins[plugin_id]
+            plugin.shutdown()
+            
+            # Remove plugin
+            del self.plugins[plugin_id]
+            
+            logger.info(f"Unloaded plugin: {plugin_id}")
+            return True
+        
+        except Exception as e:
+            logger.error(f"Error unloading plugin {plugin_id}: {e}")
+            return False
     
-    def get_plugin_info(self, plugin_id: str) -> Dict[str, Any]:
+    def unload_all_plugins(self) -> bool:
         """
-        Get detailed information about a plugin.
+        Unload all loaded plugins.
+        
+        Returns:
+            True if all plugins were unloaded, False if any unload failed
+        """
+        success = True
+        plugin_ids = list(self.plugins.keys())
+        
+        for plugin_id in plugin_ids:
+            if not self.unload_plugin(plugin_id):
+                success = False
+        
+        return success
+    
+    def get_plugin(self, plugin_id: str) -> Optional[PluginBase]:
+        """
+        Get a loaded plugin by ID.
         
         Args:
-            plugin_id: Plugin ID to get information for
+            plugin_id: ID of the plugin to get
             
         Returns:
-            Dictionary with plugin information
+            Plugin instance or None if not loaded
+        """
+        return self.plugins.get(plugin_id)
+    
+    def get_plugins_by_type(self, plugin_type: str) -> Dict[str, PluginBase]:
+        """
+        Get all loaded plugins of a specific type.
+        
+        Args:
+            plugin_type: Type of plugins to get
+            
+        Returns:
+            Dictionary mapping plugin IDs to plugin instances
+        """
+        return {
+            plugin_id: plugin for plugin_id, plugin in self.plugins.items()
+            if plugin.plugin_type == plugin_type
+        }
+    
+    def get_available_plugin_types(self) -> Set[str]:
+        """
+        Get a set of available plugin types.
+        
+        Returns:
+            Set of plugin types
+        """
+        return {plugin_class.plugin_type for plugin_class in self.plugin_classes.values()}
+    
+    def reload_plugin(self, plugin_id: str) -> Optional[PluginBase]:
+        """
+        Reload a plugin.
+        
+        Args:
+            plugin_id: ID of the plugin to reload
+            
+        Returns:
+            Reloaded plugin instance or None if reloading failed
+        """
+        # Get the current configuration if the plugin is loaded
+        config = None
+        if plugin_id in self.plugins:
+            config = self.plugins[plugin_id].get_config()
+            
+            # Unload the plugin
+            if not self.unload_plugin(plugin_id):
+                logger.error(f"Failed to unload plugin {plugin_id} for reloading")
+                return None
+        
+        # Reimport the module
+        if plugin_id in self.plugin_modules:
+            module = self.plugin_modules[plugin_id]
+            try:
+                importlib.reload(module)
+            except Exception as e:
+                logger.error(f"Error reloading module for plugin {plugin_id}: {e}")
+                return None
+        
+        # Rediscover plugin class
+        self.discover_plugins()
+        
+        # Load the plugin with the same configuration
+        return self.load_plugin(plugin_id, config)
+    
+    def configure_plugin(self, plugin_id: str, config: Dict[str, Any]) -> bool:
+        """
+        Configure a plugin.
+        
+        Args:
+            plugin_id: ID of the plugin to configure
+            config: Configuration dictionary
+            
+        Returns:
+            True if the plugin was configured successfully, False otherwise
         """
         plugin = self.get_plugin(plugin_id)
-        if plugin is None:
-            return {}
+        if not plugin:
+            logger.error(f"Plugin not loaded: {plugin_id}")
+            return False
         
-        return {
-            'id': plugin.plugin_id,
-            'name': plugin.name,
-            'version': plugin.version,
-            'description': plugin.description,
-            'type': plugin.plugin_type,
-            'initialized': self.is_plugin_initialized(plugin_id),
-            'enabled': plugin.enabled,
-            'config': plugin.get_config()
-        }
-
-
-# Determine the base directory for the ai_document_organizer_v2 package
-base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        try:
+            # Validate configuration
+            valid, error = plugin.validate_config(config)
+            if not valid:
+                logger.error(f"Invalid configuration for plugin {plugin_id}: {error}")
+                return False
+            
+            # Configure the plugin
+            if not plugin.configure(config):
+                logger.error(f"Failed to configure plugin {plugin_id}")
+                return False
+            
+            # Update settings if available
+            if self.settings_manager:
+                for key, value in config.items():
+                    self.settings_manager.set_plugin_setting(plugin_id, key, value)
+                self.settings_manager.save_settings()
+            
+            return True
+        
+        except Exception as e:
+            logger.error(f"Error configuring plugin {plugin_id}: {e}")
+            return False
+    
+    def get_plugin_info(self, plugin_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get information about a plugin.
+        
+        Args:
+            plugin_id: ID of the plugin
+            
+        Returns:
+            Dictionary with plugin information or None if not found
+        """
+        plugin = self.get_plugin(plugin_id)
+        if plugin:
+            return plugin.get_info()
+        
+        # Check if the plugin class is known
+        if plugin_id in self.plugin_classes:
+            plugin_class = self.plugin_classes[plugin_id]
+            return {
+                "name": plugin_class.plugin_name,
+                "description": plugin_class.plugin_description,
+                "version": plugin_class.plugin_version,
+                "type": plugin_class.plugin_type,
+                "loaded": False
+            }
+        
+        return None
+    
+    def get_all_plugin_info(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Get information about all known plugins.
+        
+        Returns:
+            Dictionary mapping plugin IDs to plugin information
+        """
+        # Discover plugins
+        self.discover_plugins()
+        
+        info = {}
+        
+        # Add information for known plugin classes
+        for plugin_id, plugin_class in self.plugin_classes.items():
+            info[plugin_id] = {
+                "name": plugin_class.plugin_name,
+                "description": plugin_class.plugin_description,
+                "version": plugin_class.plugin_version,
+                "type": plugin_class.plugin_type,
+                "loaded": plugin_id in self.plugins
+            }
+        
+        # Update with information for loaded plugins
+        for plugin_id, plugin in self.plugins.items():
+            info[plugin_id] = plugin.get_info()
+            info[plugin_id]["loaded"] = True
+        
+        return info

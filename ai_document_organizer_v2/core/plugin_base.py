@@ -45,6 +45,8 @@ class BasePlugin(ABC):
         self.description = description or self.__class__.description
         self.enabled = True
         self._config = {}
+        # Will be set by PluginManager during registration
+        self.settings_manager = None
         
         logger.debug(f"Initialized plugin {self.name} ({self.plugin_id})")
     
@@ -126,6 +128,40 @@ class BasePlugin(ABC):
     
     def __str__(self) -> str:
         return f"{self.name} ({self.plugin_id}) v{self.version}"
+        
+    def get_setting(self, key: str, default: Any = None) -> Any:
+        """
+        Get a setting value from the settings manager.
+        
+        Args:
+            key: Setting key (can use dot notation for nested settings)
+            default: Default value if setting doesn't exist
+            
+        Returns:
+            Setting value or default if not found
+        """
+        if self.settings_manager is None:
+            logger.warning(f"No settings manager available for plugin {self.name}")
+            return default
+        
+        return self.settings_manager.get_setting(key, default)
+        
+    def set_setting(self, key: str, value: Any) -> bool:
+        """
+        Set a setting value in the settings manager.
+        
+        Args:
+            key: Setting key (can use dot notation for nested settings)
+            value: Value to set
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if self.settings_manager is None:
+            logger.warning(f"No settings manager available for plugin {self.name}")
+            return False
+        
+        return self.settings_manager.set_setting(key, value)
 
 
 class FileParserPlugin(BasePlugin):

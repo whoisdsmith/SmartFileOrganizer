@@ -93,7 +93,7 @@ def main():
         try:
             # Initialize plugin system
             settings_manager = SettingsManager()
-            plugin_manager = PluginManager()
+            plugin_manager = PluginManager(settings_manager=settings_manager)
             
             # Discover and initialize plugins
             discovery_results = plugin_manager.discover_plugins()
@@ -112,8 +112,9 @@ def main():
             
             # If just testing plugins, run the test and exit
             if args.test_plugins:
-                from ai_document_organizer_v2.test_plugin_system import main as test_main
-                test_main()
+                # Import our test script
+                import test_v2_plugins
+                test_v2_plugins.main()
                 return
         except Exception as e:
             logger.error(f"Error initializing V2 plugin system: {e}")

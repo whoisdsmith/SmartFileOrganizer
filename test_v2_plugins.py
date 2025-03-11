@@ -8,6 +8,7 @@ import os
 import sys
 import argparse
 import logging
+from datetime import datetime
 
 # Set up logging
 logging.basicConfig(
@@ -15,6 +16,11 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger("PluginTest")
+
+# Check for Google API Key in environment
+GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY') or os.environ.get('GEMINI_API_KEY')
+if not GOOGLE_API_KEY:
+    logger.warning("No Google API Key found in environment. Set GOOGLE_API_KEY or GEMINI_API_KEY to enable AI features.")
 
 # Import V2 plugin system
 from ai_document_organizer_v2.core import PluginManager, SettingsManager
@@ -25,13 +31,15 @@ def main():
     """Main test function."""
     parser = argparse.ArgumentParser(description='Test AI Document Organizer V2 plugin system')
     parser.add_argument('--pdf', help='Path to a PDF file to test with the PDF parser plugin')
+    parser.add_argument('--text', help='Text to analyze with the AI analyzer plugin')
+    parser.add_argument('--test-all', action='store_true', help='Test all available plugins')
     args = parser.parse_args()
     
     logger.info("Starting V2 plugin system test")
     
     # Initialize plugin system
     settings_manager = SettingsManager()
-    plugin_manager = PluginManager()
+    plugin_manager = PluginManager(settings_manager=settings_manager)
     
     # Discover plugins
     logger.info("Discovering plugins...")
@@ -105,8 +113,88 @@ def main():
                 content = result.get('content', '')
                 content_preview = content[:100] + '...' if len(content) > 100 else content
                 logger.info(f"Content preview: {content_preview}")
+                
+                # If text was extracted and AI analyzer is available, analyze it
+                if content and args.test_all:
+                    logger.info("Testing PDF content analysis with AI analyzer...")
+                    
+                    # Find Gemini analyzer
+                    ai_analyzers = plugin_manager.get_plugins_of_type('ai_analyzer')
+                    gemini_analyzer = None
+                    for analyzer_id, analyzer in ai_analyzers.items():
+                        if 'gemini' in analyzer_id.lower():
+                            gemini_analyzer = analyzer
+                            break
+                    
+                    if gemini_analyzer and getattr(gemini_analyzer, 'gemini_available', False):
+                        logger.info(f"Analyzing PDF content with {gemini_analyzer.name}...")
+                        analysis = gemini_analyzer.analyze_content(content, "pdf")
+                        
+                        if 'error' in analysis:
+                            logger.error(f"Error analyzing PDF content: {analysis['error']}")
+                        else:
+                            logger.info("PDF content analyzed successfully")
+                            logger.info("Analysis results:")
+                            for key, value in analysis.items():
+                                if isinstance(value, list):
+                                    value_str = ", ".join(value[:3])
+                                    if len(value) > 3:
+                                        value_str += ", ..."
+                                else:
+                                    value_str = str(value)
+                                logger.info(f"  - {key}: {value_str}")
+                    else:
+                        logger.warning("AI analyzer not available for PDF content analysis")
         else:
             logger.warning("PDF parser plugin not found")
+    
+    # Test AI analyzer plugin if text was provided
+    if args.text:
+        logger.info(f"Testing AI analyzer with text: {args.text[:30]}...")
+        
+        # Get AI analyzer plugins
+        ai_analyzers = plugin_manager.get_plugins_of_type('ai_analyzer')
+        
+        # Find Gemini analyzer
+        gemini_analyzer = None
+        for analyzer_id, analyzer in ai_analyzers.items():
+            if 'gemini' in analyzer_id.lower():
+                gemini_analyzer = analyzer
+                break
+        
+        if gemini_analyzer:
+            logger.info(f"Found AI analyzer: {gemini_analyzer.name}")
+            
+            # Check if Gemini is available
+            gemini_available = getattr(gemini_analyzer, 'gemini_available', False)
+            status = "Available" if gemini_available else "Missing"
+            logger.info(f"Gemini AI availability: {status}")
+            
+            if gemini_available:
+                # Get available models
+                models = gemini_analyzer.get_available_models()
+                models_preview = models[:3] + ['...'] if len(models) > 3 else models
+                logger.info(f"Available models: {', '.join(models_preview)}")
+                
+                # Analyze text
+                logger.info("Analyzing text content...")
+                result = gemini_analyzer.analyze_content(args.text, "text")
+                
+                if 'error' in result:
+                    logger.error(f"Error analyzing text: {result['error']}")
+                else:
+                    logger.info("Text analyzed successfully")
+                    logger.info("Analysis results:")
+                    for key, value in result.items():
+                        if isinstance(value, list):
+                            value_str = ", ".join(value[:3])
+                            if len(value) > 3:
+                                value_str += ", ..."
+                        else:
+                            value_str = str(value)
+                        logger.info(f"  - {key}: {value_str}")
+        else:
+            logger.warning("AI analyzer plugin not found")
     
     # Test compatibility layer
     logger.info("Testing compatibility layer...")

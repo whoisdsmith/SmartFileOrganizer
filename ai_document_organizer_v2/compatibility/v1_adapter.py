@@ -182,7 +182,7 @@ class V1FileOrganizerWrapper(V1Adapter):
         return v1_organizer.organize_files(analyzed_files, target_dir, callback, options)
 
 
-class V1AIAnalyzerWrapper:
+class V1AIAnalyzerWrapper(V1Adapter):
     """Wrapper for V2 AI analyzer plugins to provide V1 AIAnalyzer API"""
     
     def __init__(self, plugin_manager, settings_manager):
@@ -193,10 +193,19 @@ class V1AIAnalyzerWrapper:
             plugin_manager: Plugin manager instance
             settings_manager: Settings manager instance
         """
-        self.plugin_manager = plugin_manager
-        self.settings_manager = settings_manager
+        super().__init__(plugin_manager, settings_manager)
         self._analyzer = None
         self._load_analyzer()
+        
+    def create_instance(self):
+        """
+        Create a V1-compatible AIAnalyzer instance
+        
+        Returns:
+            AIAnalyzer instance or wrapper
+        """
+        # Return self as it implements the same interface
+        return self
     
     def _load_analyzer(self):
         """Load an AI analyzer plugin"""
@@ -306,7 +315,7 @@ class V1AIAnalyzerWrapper:
         return v1_analyzer.find_related_content(target_doc, document_list, max_results)
 
 
-class V1SettingsWrapper:
+class V1SettingsWrapper(V1Adapter):
     """Wrapper for V2 settings to provide V1 SettingsManager API"""
     
     def __init__(self, plugin_manager, settings_manager):
@@ -317,8 +326,17 @@ class V1SettingsWrapper:
             plugin_manager: Plugin manager instance
             settings_manager: Settings manager instance
         """
-        self.plugin_manager = plugin_manager
-        self.settings_manager = settings_manager
+        super().__init__(plugin_manager, settings_manager)
+        
+    def create_instance(self):
+        """
+        Create a V1-compatible SettingsManager instance
+        
+        Returns:
+            SettingsManager instance or wrapper
+        """
+        # Return self as it implements the same interface
+        return self
     
     def load_settings(self):
         """
@@ -447,7 +465,7 @@ class V1SettingsWrapper:
         return default
 
 
-class V1DuplicateDetectorWrapper:
+class V1DuplicateDetectorWrapper(V1Adapter):
     """Wrapper for V2 duplicate detector plugins to provide V1 DuplicateDetector API"""
     
     def __init__(self, plugin_manager, settings_manager):
@@ -458,10 +476,19 @@ class V1DuplicateDetectorWrapper:
             plugin_manager: Plugin manager instance
             settings_manager: Settings manager instance
         """
-        self.plugin_manager = plugin_manager
-        self.settings_manager = settings_manager
+        super().__init__(plugin_manager, settings_manager)
         self._detector = None
         self._load_detector()
+        
+    def create_instance(self):
+        """
+        Create a V1-compatible DuplicateDetector instance
+        
+        Returns:
+            DuplicateDetector instance or wrapper
+        """
+        # Return self as it implements the same interface
+        return self
     
     def _load_detector(self):
         """Load a duplicate detector plugin"""

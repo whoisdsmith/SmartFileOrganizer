@@ -135,3 +135,7 @@ src/cache/ocr/
 src/cache/embeddings/
 *.bin
 *.pkl
+
+# Duplicate detection cache
+src/cache/duplicates/
+*.dup.json

@@ -92,6 +92,11 @@ class PDFParserPlugin(FileParserPlugin):
             - 'success': Boolean indicating success/failure
             - 'error': Error message if parsing failed
         """
+        # Get settings - using BasePlugin convenience methods
+        extract_images = self.get_setting("pdf_parser.extract_images", False)
+        ocr_enabled = self.get_setting("pdf_parser.ocr_enabled", False)
+        ocr_language = self.get_setting("pdf_parser.ocr_language", "eng")
+        
         if not os.path.exists(file_path):
             return {
                 'content': '',

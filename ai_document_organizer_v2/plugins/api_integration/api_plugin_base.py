@@ -7,7 +7,9 @@ standard interface that all plugins must implement.
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, Set
+
+from .api_capabilities import CapabilitySet
 
 
 logger = logging.getLogger(__name__)
@@ -241,6 +243,125 @@ class APIPluginBase(ABC):
         This method should be called when the plugin is no longer needed.
         """
         pass
+        
+    def get_capabilities(self) -> CapabilitySet:
+        """
+        Get the capabilities supported by this API plugin.
+        
+        Returns:
+            CapabilitySet containing the capabilities supported by this plugin
+        """
+        capabilities = CapabilitySet()
+        
+        # Add authentication capabilities
+        for auth_method in self.supported_auth_methods:
+            capabilities.add_capability(f"auth:{auth_method}")
+        
+        # Add integration capabilities
+        if self.supports_webhooks:
+            capabilities.add_capability("integration:webhooks")
+            
+        if self.supports_streaming:
+            capabilities.add_capability("integration:streaming")
+            
+        if self.supports_batch_operations:
+            capabilities.add_capability("integration:batch")
+        
+        # Add performance capabilities
+        if self.supports_caching:
+            capabilities.add_capability("performance:caching")
+            
+        if self.requires_rate_limiting:
+            capabilities.add_capability("performance:rate_limited")
+        
+        # Add data format capabilities
+        capabilities.add_capability("format:json")  # Assume all APIs support JSON
+        
+        # Add operation capabilities
+        for operation in self.available_operations:
+            capabilities.add_capability(f"operation:{operation}")
+        
+        return capabilities
+    
+    def discover_remote_capabilities(self) -> Optional[CapabilitySet]:
+        """
+        Discover capabilities by querying the remote API.
+        
+        This method should be overridden by plugins that support runtime
+        capability discovery from the API server.
+        
+        Returns:
+            CapabilitySet of remote capabilities or None if discovery failed
+        """
+        logger.info(f"Remote capability discovery not supported by {self.__class__.__name__}")
+        return None
+        
+    def supports_capability(self, capability_name: str) -> bool:
+        """
+        Check if this plugin supports a specific capability.
+        
+        Args:
+            capability_name: Name of the capability to check
+            
+        Returns:
+            True if the capability is supported, False otherwise
+        """
+        capabilities = self.get_capabilities()
+        return capabilities.has_capability(capability_name)
+    
+    def negotiate_capabilities(self, required_capabilities: CapabilitySet) -> Dict[str, Any]:
+        """
+        Negotiate capabilities with the client.
+        
+        Args:
+            required_capabilities: CapabilitySet of capabilities required by the client
+            
+        Returns:
+            Dictionary with negotiation results:
+            {
+                'success': bool,
+                'supported': List[str],  # Supported capability names
+                'missing': List[str],    # Missing capability names
+                'alternatives': Dict[str, List[str]]  # Alternative capabilities
+            }
+        """
+        supported_capabilities = self.get_capabilities()
+        
+        # Check if all required capabilities are supported
+        is_compatible = supported_capabilities.is_compatible_with(required_capabilities)
+        missing = required_capabilities.get_missing_capabilities(supported_capabilities)
+        
+        # Get alternative capabilities for missing ones
+        alternatives = {}
+        for cap in missing:
+            alternatives[cap] = self._get_alternative_capabilities(cap)
+        
+        return {
+            'success': is_compatible,
+            'supported': supported_capabilities.get_capability_names(),
+            'missing': missing,
+            'alternatives': alternatives
+        }
+        
+    def _get_alternative_capabilities(self, capability_name: str) -> List[str]:
+        """
+        Get alternative capabilities for a missing capability.
+        
+        Args:
+            capability_name: Name of the missing capability
+            
+        Returns:
+            List of alternative capability names
+        """
+        # Example alternatives - override in specific plugins for better suggestions
+        alternatives = {
+            "auth:oauth2": ["auth:api_key", "auth:jwt"],
+            "format:xml": ["format:json"],
+            "integration:webhooks": ["integration:polling"],
+            "integration:streaming": ["integration:batch"]
+        }
+        
+        return alternatives.get(capability_name, [])
     
     def __str__(self) -> str:
         """

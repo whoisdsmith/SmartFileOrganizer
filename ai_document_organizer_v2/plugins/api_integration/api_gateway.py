@@ -1,18 +1,18 @@
 """
-API Gateway for the External API Integration Framework.
+API Gateway for External API Integration Framework.
 
-This module implements a centralized gateway for all external API interactions,
-providing a single entry point for accessing different API services.
+This module provides a centralized entry point for all external API calls,
+managing authentication, rate limiting, and plugin registration.
 """
 
 import logging
-import threading
-from typing import Any, Dict, List, Optional, Callable, Union, Type
 import time
+import threading
+from typing import Any, Dict, List, Optional, Union, Set
 
 from .api_plugin_base import APIPluginBase
 from .rate_limiter import RateLimiter
-from .auth_provider import AuthProvider
+from .auth_provider import AuthenticationProvider
 
 
 logger = logging.getLogger(__name__)
@@ -20,10 +20,10 @@ logger = logging.getLogger(__name__)
 
 class APIGateway:
     """
-    Centralized gateway for external API interactions.
+    Central gateway for all external API calls.
     
-    This class provides a unified interface for interacting with various external APIs,
-    handling authentication, rate limiting, and plugin management.
+    This class serves as the main entry point for the API Integration Framework,
+    providing plugin registration, authentication management, and rate limiting.
     """
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
@@ -31,13 +31,18 @@ class APIGateway:
         Initialize the API Gateway.
         
         Args:
-            config: Optional configuration dictionary
+            config: Optional configuration dictionary for the gateway
         """
         self.config = config or {}
+        self.rate_limiter = RateLimiter()
+        self.auth_provider = AuthenticationProvider()
+        
+        # Plugin registry
         self.plugins = {}  # type: Dict[str, APIPluginBase]
-        self.rate_limiters = {}  # type: Dict[str, RateLimiter]
-        self.auth_provider = AuthProvider()
-        self.lock = threading.RLock()
+        self.plugin_status = {}  # type: Dict[str, Dict[str, Any]]
+        
+        # Thread safety
+        self._lock = threading.RLock()
         
         logger.info("API Gateway initialized")
     
@@ -46,32 +51,48 @@ class APIGateway:
         Register an API plugin with the gateway.
         
         Args:
-            plugin: API plugin instance
+            plugin: API plugin instance to register
             
         Returns:
             True if registration was successful, False otherwise
         """
-        if not isinstance(plugin, APIPluginBase):
-            logger.error(f"Cannot register plugin: not an APIPluginBase instance")
+        try:
+            plugin_name = plugin.__class__.__name__
+            api_name = plugin.api_name
+            
+            with self._lock:
+                # Check if plugin is already registered
+                if plugin_name in self.plugins:
+                    logger.warning(f"Plugin {plugin_name} is already registered")
+                    return False
+                
+                # Register the plugin
+                self.plugins[plugin_name] = plugin
+                
+                # Initialize plugin status
+                self.plugin_status[plugin_name] = {
+                    'registered_at': time.time(),
+                    'api_name': api_name,
+                    'is_authenticated': plugin.is_authenticated,
+                    'last_used': None,
+                    'request_count': 0,
+                    'error_count': 0,
+                    'active': True
+                }
+                
+                # Configure rate limiting if required
+                if plugin.requires_rate_limiting:
+                    self.rate_limiter.register_api(
+                        api_name, 
+                        plugin.rate_limit_rules
+                    )
+                
+                logger.info(f"Registered plugin {plugin_name} for API {api_name}")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Error registering plugin: {e}")
             return False
-            
-        plugin_name = plugin.api_name
-        
-        with self.lock:
-            if plugin_name in self.plugins:
-                logger.warning(f"Plugin '{plugin_name}' already registered")
-                return False
-                
-            # If rate limiting is required, create a rate limiter
-            if plugin.requires_rate_limiting:
-                self.rate_limiters[plugin_name] = RateLimiter(plugin.rate_limit_rules)
-                logger.info(f"Created rate limiter for '{plugin_name}'")
-                
-            # Store the plugin
-            self.plugins[plugin_name] = plugin
-            logger.info(f"Registered API plugin: {plugin_name} (v{plugin.api_version})")
-            
-            return True
     
     def unregister_plugin(self, plugin_name: str) -> bool:
         """
@@ -83,47 +104,91 @@ class APIGateway:
         Returns:
             True if unregistration was successful, False otherwise
         """
-        with self.lock:
+        with self._lock:
             if plugin_name not in self.plugins:
-                logger.warning(f"Plugin '{plugin_name}' not registered")
+                logger.warning(f"Plugin {plugin_name} is not registered")
                 return False
-                
-            # Clean up resources
-            try:
-                self.plugins[plugin_name].close()
-            except Exception as e:
-                logger.error(f"Error closing plugin '{plugin_name}': {e}")
-                
-            # Remove rate limiter if it exists
-            if plugin_name in self.rate_limiters:
-                del self.rate_limiters[plugin_name]
-                
-            # Remove the plugin
-            del self.plugins[plugin_name]
-            logger.info(f"Unregistered API plugin: {plugin_name}")
             
+            # Get the plugin instance
+            plugin = self.plugins[plugin_name]
+            
+            # Close the plugin
+            try:
+                plugin.close()
+            except Exception as e:
+                logger.error(f"Error closing plugin {plugin_name}: {e}")
+            
+            # Remove the plugin from the registry
+            del self.plugins[plugin_name]
+            
+            # Remove the plugin status
+            if plugin_name in self.plugin_status:
+                del self.plugin_status[plugin_name]
+            
+            # Unregister from rate limiter if needed
+            if plugin.requires_rate_limiting:
+                self.rate_limiter.unregister_api(plugin.api_name)
+            
+            logger.info(f"Unregistered plugin {plugin_name}")
             return True
     
     def get_plugin(self, plugin_name: str) -> Optional[APIPluginBase]:
         """
-        Get a registered API plugin by name.
+        Get a registered plugin by name.
         
         Args:
             plugin_name: Name of the plugin to retrieve
             
         Returns:
-            API plugin instance or None if not found
+            Plugin instance or None if not found
         """
         return self.plugins.get(plugin_name)
     
-    def get_registered_plugins(self) -> List[str]:
+    def get_plugin_by_api(self, api_name: str) -> Optional[APIPluginBase]:
         """
-        Get a list of all registered plugin names.
+        Get a plugin by API name.
         
+        Args:
+            api_name: Name of the API to find a plugin for
+            
         Returns:
-            List of plugin names
+            Plugin instance or None if not found
         """
-        return list(self.plugins.keys())
+        for plugin in self.plugins.values():
+            if plugin.api_name == api_name:
+                return plugin
+        return None
+    
+    def authenticate_plugin(self, plugin_name: str) -> bool:
+        """
+        Authenticate a plugin with its API service.
+        
+        Args:
+            plugin_name: Name of the plugin to authenticate
+            
+        Returns:
+            True if authentication was successful, False otherwise
+        """
+        plugin = self.get_plugin(plugin_name)
+        
+        if not plugin:
+            logger.error(f"Plugin {plugin_name} is not registered")
+            return False
+            
+        try:
+            # Authenticate the plugin
+            auth_result = plugin.authenticate()
+            
+            # Update plugin status
+            with self._lock:
+                if plugin_name in self.plugin_status:
+                    self.plugin_status[plugin_name]['is_authenticated'] = auth_result
+                    
+            return auth_result
+            
+        except Exception as e:
+            logger.error(f"Error authenticating plugin {plugin_name}: {e}")
+            return False
     
     def execute_request(self, 
                        plugin_name: str,
@@ -134,11 +199,9 @@ class APIGateway:
                        headers: Optional[Dict[str, str]] = None,
                        files: Optional[Dict[str, Any]] = None,
                        timeout: Optional[int] = None,
-                       retry_count: int = 3,
-                       retry_delay: int = 1,
                        **kwargs) -> Dict[str, Any]:
         """
-        Execute a request to an API through a registered plugin.
+        Execute a request through a plugin.
         
         Args:
             plugin_name: Name of the plugin to use
@@ -149,8 +212,6 @@ class APIGateway:
             headers: HTTP headers
             files: Files to upload
             timeout: Request timeout in seconds
-            retry_count: Number of retries for failed requests
-            retry_delay: Delay between retries in seconds
             **kwargs: Additional arguments for the request
             
         Returns:
@@ -159,82 +220,91 @@ class APIGateway:
         plugin = self.get_plugin(plugin_name)
         
         if not plugin:
-            logger.error(f"Plugin '{plugin_name}' not found")
+            logger.error(f"Plugin {plugin_name} is not registered")
             return {
                 'success': False,
-                'error': f"Plugin '{plugin_name}' not found",
+                'error': f"Plugin {plugin_name} is not registered",
                 'data': None
             }
             
         # Check if plugin is authenticated
-        if not plugin.is_authenticated and not plugin.authenticate():
-            logger.error(f"Plugin '{plugin_name}' is not authenticated")
-            return {
-                'success': False,
-                'error': f"Plugin '{plugin_name}' is not authenticated",
-                'data': None
-            }
-            
-        # Check rate limits
-        if plugin.requires_rate_limiting:
-            rate_limiter = self.rate_limiters.get(plugin_name)
-            
-            if rate_limiter and not rate_limiter.can_proceed():
-                logger.warning(f"Rate limit exceeded for '{plugin_name}'")
+        if not plugin.is_authenticated:
+            logger.warning(f"Plugin {plugin_name} is not authenticated, attempting authentication")
+            if not self.authenticate_plugin(plugin_name):
                 return {
                     'success': False,
-                    'error': "Rate limit exceeded",
-                    'data': None,
-                    'retry_after': rate_limiter.get_retry_after()
+                    'error': f"Failed to authenticate plugin {plugin_name}",
+                    'data': None
                 }
         
-        # Execute the request with retry logic
-        for attempt in range(retry_count):
-            try:
-                result = plugin.execute_request(
-                    endpoint=endpoint,
-                    method=method,
-                    params=params,
-                    data=data,
-                    headers=headers,
-                    files=files,
-                    timeout=timeout,
-                    **kwargs
-                )
-                
-                # Record successful request for rate limiting
-                if plugin.requires_rate_limiting and plugin_name in self.rate_limiters:
-                    self.rate_limiters[plugin_name].record_request()
-                    
-                return result
-                
-            except Exception as e:
-                logger.warning(f"Request failed (attempt {attempt+1}/{retry_count}): {e}")
-                
-                if attempt < retry_count - 1:
-                    # Wait before retrying
-                    time.sleep(retry_delay * (2 ** attempt))  # Exponential backoff
-                else:
-                    # Last attempt failed
-                    logger.error(f"Request failed after {retry_count} attempts: {e}")
-                    return {
-                        'success': False,
-                        'error': str(e),
-                        'data': None
-                    }
+        # Check rate limits
+        if plugin.requires_rate_limiting:
+            if not self.rate_limiter.can_make_request(plugin.api_name):
+                wait_time = self.rate_limiter.get_wait_time(plugin.api_name)
+                logger.warning(f"Rate limit exceeded for {plugin.api_name}, need to wait {wait_time:.2f} seconds")
+                return {
+                    'success': False,
+                    'error': f"Rate limit exceeded, try again in {wait_time:.2f} seconds",
+                    'data': None,
+                    'rate_limited': True,
+                    'wait_time': wait_time
+                }
+        
+        try:
+            # Update plugin status
+            with self._lock:
+                if plugin_name in self.plugin_status:
+                    self.plugin_status[plugin_name]['last_used'] = time.time()
+                    self.plugin_status[plugin_name]['request_count'] += 1
+            
+            # Execute the request
+            result = plugin.execute_request(
+                endpoint=endpoint,
+                method=method,
+                params=params,
+                data=data,
+                headers=headers,
+                files=files,
+                timeout=timeout,
+                **kwargs
+            )
+            
+            # Record the request in rate limiter
+            if plugin.requires_rate_limiting:
+                self.rate_limiter.record_request(plugin.api_name)
+            
+            # Update error count if request failed
+            if not result.get('success', False):
+                with self._lock:
+                    if plugin_name in self.plugin_status:
+                        self.plugin_status[plugin_name]['error_count'] += 1
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error executing request through plugin {plugin_name}: {e}")
+            
+            # Update error count
+            with self._lock:
+                if plugin_name in self.plugin_status:
+                    self.plugin_status[plugin_name]['error_count'] += 1
+            
+            return {
+                'success': False,
+                'error': str(e),
+                'data': None
+            }
     
     def execute_operation(self,
                          plugin_name: str,
                          operation: str,
-                         retry_count: int = 3,
                          **kwargs) -> Dict[str, Any]:
         """
-        Execute a named operation through a registered plugin.
+        Execute a named operation through a plugin.
         
         Args:
             plugin_name: Name of the plugin to use
             operation: Name of the operation to execute
-            retry_count: Number of retries for failed operations
             **kwargs: Operation-specific parameters
             
         Returns:
@@ -243,76 +313,84 @@ class APIGateway:
         plugin = self.get_plugin(plugin_name)
         
         if not plugin:
-            logger.error(f"Plugin '{plugin_name}' not found")
+            logger.error(f"Plugin {plugin_name} is not registered")
             return {
                 'success': False,
-                'error': f"Plugin '{plugin_name}' not found",
-                'data': None
-            }
-            
-        # Check if operation is supported
-        if operation not in plugin.available_operations:
-            logger.error(f"Operation '{operation}' not supported by plugin '{plugin_name}'")
-            return {
-                'success': False,
-                'error': f"Operation '{operation}' not supported",
+                'error': f"Plugin {plugin_name} is not registered",
                 'data': None
             }
             
         # Check if plugin is authenticated
-        if not plugin.is_authenticated and not plugin.authenticate():
-            logger.error(f"Plugin '{plugin_name}' is not authenticated")
-            return {
-                'success': False,
-                'error': f"Plugin '{plugin_name}' is not authenticated",
-                'data': None
-            }
-            
-        # Check rate limits
-        if plugin.requires_rate_limiting:
-            rate_limiter = self.rate_limiters.get(plugin_name)
-            
-            if rate_limiter and not rate_limiter.can_proceed():
-                logger.warning(f"Rate limit exceeded for '{plugin_name}'")
+        if not plugin.is_authenticated:
+            logger.warning(f"Plugin {plugin_name} is not authenticated, attempting authentication")
+            if not self.authenticate_plugin(plugin_name):
                 return {
                     'success': False,
-                    'error': "Rate limit exceeded",
-                    'data': None,
-                    'retry_after': rate_limiter.get_retry_after()
+                    'error': f"Failed to authenticate plugin {plugin_name}",
+                    'data': None
                 }
         
-        # Execute the operation with retry logic
-        for attempt in range(retry_count):
-            try:
-                result = plugin.execute_operation(
-                    operation=operation,
-                    **kwargs
-                )
-                
-                # Record successful request for rate limiting
-                if plugin.requires_rate_limiting and plugin_name in self.rate_limiters:
-                    self.rate_limiters[plugin_name].record_request()
-                    
-                return result
-                
-            except Exception as e:
-                logger.warning(f"Operation failed (attempt {attempt+1}/{retry_count}): {e}")
-                
-                if attempt < retry_count - 1:
-                    # Wait before retrying
-                    time.sleep(1 * (2 ** attempt))  # Exponential backoff
-                else:
-                    # Last attempt failed
-                    logger.error(f"Operation failed after {retry_count} attempts: {e}")
-                    return {
-                        'success': False,
-                        'error': str(e),
-                        'data': None
-                    }
+        # Check rate limits
+        if plugin.requires_rate_limiting:
+            if not self.rate_limiter.can_make_request(plugin.api_name):
+                wait_time = self.rate_limiter.get_wait_time(plugin.api_name)
+                logger.warning(f"Rate limit exceeded for {plugin.api_name}, need to wait {wait_time:.2f} seconds")
+                return {
+                    'success': False,
+                    'error': f"Rate limit exceeded, try again in {wait_time:.2f} seconds",
+                    'data': None,
+                    'rate_limited': True,
+                    'wait_time': wait_time
+                }
+        
+        try:
+            # Update plugin status
+            with self._lock:
+                if plugin_name in self.plugin_status:
+                    self.plugin_status[plugin_name]['last_used'] = time.time()
+                    self.plugin_status[plugin_name]['request_count'] += 1
+            
+            # Execute the operation
+            result = plugin.execute_operation(operation, **kwargs)
+            
+            # Record the request in rate limiter
+            if plugin.requires_rate_limiting:
+                self.rate_limiter.record_request(plugin.api_name)
+            
+            # Update error count if operation failed
+            if not result.get('success', False):
+                with self._lock:
+                    if plugin_name in self.plugin_status:
+                        self.plugin_status[plugin_name]['error_count'] += 1
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error executing operation {operation} through plugin {plugin_name}: {e}")
+            
+            # Update error count
+            with self._lock:
+                if plugin_name in self.plugin_status:
+                    self.plugin_status[plugin_name]['error_count'] += 1
+            
+            return {
+                'success': False,
+                'error': str(e),
+                'data': None
+            }
+    
+    def get_registered_plugins(self) -> List[str]:
+        """
+        Get a list of registered plugin names.
+        
+        Returns:
+            List of registered plugin names
+        """
+        return list(self.plugins.keys())
     
     def get_plugin_status(self, plugin_name: str) -> Dict[str, Any]:
         """
-        Get the status of a registered plugin.
+        Get status information for a plugin.
         
         Args:
             plugin_name: Name of the plugin
@@ -320,54 +398,52 @@ class APIGateway:
         Returns:
             Dictionary with plugin status information
         """
-        plugin = self.get_plugin(plugin_name)
-        
-        if not plugin:
+        if plugin_name not in self.plugin_status:
             return {
-                'name': plugin_name,
-                'registered': False,
-                'available': False
+                'error': f"Plugin {plugin_name} is not registered",
+                'registered': False
             }
             
-        status = plugin.get_api_status()
-        
-        # Add rate limit information if applicable
-        if plugin.requires_rate_limiting and plugin_name in self.rate_limiters:
-            rate_limiter = self.rate_limiters[plugin_name]
-            status['rate_limits'] = {
-                'requests_remaining': rate_limiter.get_remaining_requests(),
-                'reset_time': rate_limiter.get_reset_time()
-            }
-            
-        return status
+        return self.plugin_status[plugin_name]
     
-    def get_all_plugin_statuses(self) -> Dict[str, Dict[str, Any]]:
+    def get_all_plugin_status(self) -> Dict[str, Dict[str, Any]]:
         """
-        Get the status of all registered plugins.
+        Get status information for all registered plugins.
         
         Returns:
             Dictionary mapping plugin names to status information
         """
-        return {
-            plugin_name: self.get_plugin_status(plugin_name)
-            for plugin_name in self.plugins
-        }
+        return dict(self.plugin_status)
     
-    def close(self) -> None:
+    def reset_plugin_status(self, plugin_name: str) -> bool:
         """
-        Close all plugins and clean up resources.
+        Reset status counters for a plugin.
         
-        This method should be called when the gateway is no longer needed.
-        """
-        with self.lock:
-            for plugin_name, plugin in list(self.plugins.items()):
-                try:
-                    plugin.close()
-                    logger.info(f"Closed plugin: {plugin_name}")
-                except Exception as e:
-                    logger.error(f"Error closing plugin '{plugin_name}': {e}")
-                    
-            self.plugins.clear()
-            self.rate_limiters.clear()
+        Args:
+            plugin_name: Name of the plugin
             
-        logger.info("API Gateway closed")
+        Returns:
+            True if reset was successful, False otherwise
+        """
+        if plugin_name not in self.plugin_status:
+            return False
+            
+        with self._lock:
+            self.plugin_status[plugin_name]['request_count'] = 0
+            self.plugin_status[plugin_name]['error_count'] = 0
+            
+        return True
+    
+    def reset_all_plugin_status(self) -> bool:
+        """
+        Reset status counters for all plugins.
+        
+        Returns:
+            True if reset was successful
+        """
+        with self._lock:
+            for plugin_name in self.plugin_status:
+                self.plugin_status[plugin_name]['request_count'] = 0
+                self.plugin_status[plugin_name]['error_count'] = 0
+                
+        return True

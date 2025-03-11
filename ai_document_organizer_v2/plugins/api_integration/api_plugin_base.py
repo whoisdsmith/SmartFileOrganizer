@@ -1,20 +1,24 @@
 """
-Base class for all API plugins in the AI Document Organizer V2.
+API Plugin Base for External API Integration Framework.
 
-This module defines the interface that all API plugins must implement,
-providing a standardized way to interact with external APIs.
+This module provides the base class for all API plugins, defining the
+standard interface that all plugins must implement.
 """
 
+import logging
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Union, Callable
+from typing import Any, Dict, List, Optional, Union
+
+
+logger = logging.getLogger(__name__)
 
 
 class APIPluginBase(ABC):
     """
     Abstract base class for all API plugins.
     
-    This class defines the interface that all API plugins must implement to provide
-    consistent functionality across different external API integrations.
+    This class defines the standard interface that all API plugins must implement,
+    providing a consistent way to interact with external APIs.
     """
     
     @property
@@ -46,9 +50,39 @@ class APIPluginBase(ABC):
         Return a list of supported authentication methods.
         
         Returns:
-            List of strings representing supported auth methods (e.g., ['api_key', 'oauth2'])
+            List of strings representing supported auth methods
         """
         pass
+    
+    @property
+    def supports_webhooks(self) -> bool:
+        """
+        Indicate whether this API supports webhooks.
+        
+        Returns:
+            Boolean indicating if the API supports webhooks
+        """
+        return False
+    
+    @property
+    def supports_streaming(self) -> bool:
+        """
+        Indicate whether this API supports streaming responses.
+        
+        Returns:
+            Boolean indicating if the API supports streaming responses
+        """
+        return False
+    
+    @property
+    def supports_batch_operations(self) -> bool:
+        """
+        Indicate whether this API supports batch operations.
+        
+        Returns:
+            Boolean indicating if the API supports batch operations
+        """
+        return False
     
     @property
     @abstractmethod
@@ -67,14 +101,13 @@ class APIPluginBase(ABC):
         Return the rate limit rules for this API.
         
         Returns:
-            Dictionary with rate limit rules.
-            Example: {
-                'requests_per_minute': 60,
-                'requests_per_day': 1000,
-                'concurrent_requests': 5
-            }
+            Dictionary with rate limit rules
         """
-        return {}
+        return {
+            'requests_per_minute': 60,
+            'requests_per_hour': 1000,
+            'concurrent_requests': 5
+        }
     
     @abstractmethod
     def initialize(self, config: Dict[str, Any]) -> bool:
@@ -138,15 +171,14 @@ class APIPluginBase(ABC):
         """
         pass
     
-    @abstractmethod
     def execute_operation(self, 
                          operation: str, 
                          **kwargs) -> Dict[str, Any]:
         """
         Execute a named operation on the API.
         
-        This method provides a higher-level interface to common API operations,
-        abstracting away the specific endpoints, methods, and parameters.
+        This method provides a higher-level interface than execute_request,
+        allowing for more semantic operations like 'get_user', 'create_post', etc.
         
         Args:
             operation: Name of the operation to execute
@@ -155,10 +187,14 @@ class APIPluginBase(ABC):
         Returns:
             Dictionary with operation results
         """
-        pass
+        logger.error(f"Operation {operation} not implemented by {self.__class__.__name__}")
+        return {
+            'success': False,
+            'error': f"Operation {operation} not implemented by {self.__class__.__name__}",
+            'data': None
+        }
     
     @property
-    @abstractmethod
     def available_operations(self) -> List[str]:
         """
         Return a list of available operations supported by this API plugin.
@@ -166,67 +202,8 @@ class APIPluginBase(ABC):
         Returns:
             List of operation names
         """
-        pass
+        return []
     
-    @property
-    def supports_streaming(self) -> bool:
-        """
-        Check if this API plugin supports streaming responses.
-        
-        Returns:
-            True if streaming is supported, False otherwise
-        """
-        return False
-    
-    @property
-    def supports_webhooks(self) -> bool:
-        """
-        Check if this API plugin supports webhooks.
-        
-        Returns:
-            True if webhooks are supported, False otherwise
-        """
-        return False
-    
-    @property
-    def supports_batch_operations(self) -> bool:
-        """
-        Check if this API plugin supports batch operations.
-        
-        Returns:
-            True if batch operations are supported, False otherwise
-        """
-        return False
-    
-    def get_api_status(self) -> Dict[str, Any]:
-        """
-        Get the current status of the API.
-        
-        Returns:
-            Dictionary with API status information
-        """
-        return {
-            'available': self.is_authenticated,
-            'name': self.api_name,
-            'version': self.api_version,
-        }
-    
-    def get_operation_metadata(self, operation: str) -> Dict[str, Any]:
-        """
-        Get metadata about a specific operation.
-        
-        Args:
-            operation: Operation name
-            
-        Returns:
-            Dictionary with operation metadata
-        """
-        return {
-            'operation': operation,
-            'supported': operation in self.available_operations,
-        }
-    
-    @abstractmethod
     def close(self) -> None:
         """
         Close any connections and clean up resources.
@@ -234,3 +211,21 @@ class APIPluginBase(ABC):
         This method should be called when the plugin is no longer needed.
         """
         pass
+    
+    def __str__(self) -> str:
+        """
+        Return a string representation of the plugin.
+        
+        Returns:
+            String representation of the plugin
+        """
+        return f"{self.__class__.__name__}(api={self.api_name}, version={self.api_version})"
+    
+    def __repr__(self) -> str:
+        """
+        Return a string representation of the plugin for debugging.
+        
+        Returns:
+            String representation of the plugin for debugging
+        """
+        return self.__str__()

@@ -689,15 +689,25 @@ class PostgreSQLConnectorPlugin(DatabaseConnectorPlugin):
             for col_name, col_def in columns.items():
                 # Get type (convert to PostgreSQL type)
                 col_type = col_def.get("type", "text").lower()
-                pg_type = self._TYPE_MAPPING.get(col_type, "TEXT")
                 
-                # Add length/precision if specified
-                if "length" in col_def:
-                    pg_type += f"({col_def['length']})"
-                elif "precision" in col_def and "scale" in col_def:
-                    pg_type += f"({col_def['precision']},{col_def['scale']})"
-                elif "precision" in col_def:
-                    pg_type += f"({col_def['precision']})"
+                # Special handling for serial/autoincrement fields
+                if col_type == "serial" or (col_type in ["integer", "int"] and col_def.get("autoincrement")):
+                    # For primary key with autoincrement, use SERIAL type
+                    pg_type = "SERIAL"
+                    if col_def.get("primary_key"):
+                        pg_type = "SERIAL PRIMARY KEY"
+                        # Add to primary keys list but will be handled specially
+                        primary_keys.append(col_name)
+                else:
+                    pg_type = self._TYPE_MAPPING.get(col_type, "TEXT")
+                    
+                    # Add length/precision if specified
+                    if "length" in col_def:
+                        pg_type += f"({col_def['length']})"
+                    elif "precision" in col_def and "scale" in col_def:
+                        pg_type += f"({col_def['precision']},{col_def['scale']})"
+                    elif "precision" in col_def:
+                        pg_type += f"({col_def['precision']})"
                 
                 # Build column definition
                 col_parts = [f'"{col_name}" {pg_type}']
@@ -734,8 +744,17 @@ class PostgreSQLConnectorPlugin(DatabaseConnectorPlugin):
                 column_defs.append(" ".join(col_parts))
             
             # Add primary key constraint if there are any primary keys
-            if primary_keys:
-                pk_columns = ", ".join([f'"{pk}"' for pk in primary_keys])
+            # Only add an explicit PRIMARY KEY constraint if we have primary keys that are not SERIAL PRIMARY KEY
+            non_serial_primary_keys = []
+            for pk in primary_keys:
+                col_def = columns.get(pk, {})
+                col_type = col_def.get("type", "").lower()
+                # Skip if this is a SERIAL PRIMARY KEY as it's already handled
+                if not (col_type == "serial" or (col_type in ["integer", "int"] and col_def.get("autoincrement"))):
+                    non_serial_primary_keys.append(pk)
+                    
+            if non_serial_primary_keys:
+                pk_columns = ", ".join([f'"{pk}"' for pk in non_serial_primary_keys])
                 column_defs.append(f"PRIMARY KEY ({pk_columns})")
             
             # Construct full CREATE TABLE statement

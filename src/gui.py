@@ -253,79 +253,123 @@ class DocumentOrganizerApp:
         self.tree.bind("<<TreeviewSelect>>", self.show_file_details)
 
     def _setup_layout(self):
-        """Setup the layout of widgets using grid"""
-        # Place the notebook in the root window
-        self.notebook.grid(row=0, column=0, sticky='nsew')
+        """Set up the layout for all widgets"""
+        # Main frame
+        self.main_frame.pack(fill=tk.BOTH, expand=True)
 
-        # Configure the root window grid
-        self.root.grid_rowconfigure(0, weight=1)
-        self.root.grid_columnconfigure(0, weight=1)
+        # Directory selection frame
+        self.dir_frame.pack(fill=tk.X, padx=5, pady=5)
 
-        # Directory frame (inside main tab)
-        self.dir_frame.grid(row=0, column=0, columnspan=2,
-                            sticky='ew', padx=10, pady=10)
+        # Source directory widgets
+        self.source_label.grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        self.source_entry.grid(row=0, column=1, sticky=tk.EW, padx=5, pady=5)
+        self.source_button.grid(row=0, column=2, sticky=tk.E, padx=5, pady=5)
 
-        self.source_label.grid(row=0, column=0, sticky='w', padx=5, pady=5)
-        self.source_entry.grid(row=0, column=1, sticky='ew', padx=5, pady=5)
-        self.source_button.grid(row=0, column=2, sticky='e', padx=5, pady=5)
+        # Target directory widgets
+        self.target_label.grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        self.target_entry.grid(row=1, column=1, sticky=tk.EW, padx=5, pady=5)
+        self.target_button.grid(row=1, column=2, sticky=tk.E, padx=5, pady=5)
 
-        self.target_label.grid(row=1, column=0, sticky='w', padx=5, pady=5)
-        self.target_entry.grid(row=1, column=1, sticky='ew', padx=5, pady=5)
-        self.target_button.grid(row=1, column=2, sticky='e', padx=5, pady=5)
+        # Configure grid weights
+        self.dir_frame.columnconfigure(1, weight=1)
 
-        # Options frame layout
-        self.options_frame.grid(
-            row=2, column=0, columnspan=2, sticky='ew', padx=10, pady=5)
-        self.batch_label.grid(row=0, column=0, sticky='w', padx=5, pady=5)
-        self.batch_combobox.grid(row=0, column=1, sticky='w', padx=5, pady=5)
-        self.scan_button.grid(row=0, column=2, sticky='e', padx=5, pady=5)
-
-        # Status frame
-        self.status_frame.grid(row=3, column=0, columnspan=2,
-                               sticky='ew', padx=10, pady=(0, 10))
-        self.status_label.grid(row=0, column=0, sticky='w', padx=5, pady=5)
-        self.progress_bar.grid(
-            row=1, column=0, columnspan=2, sticky='ew', padx=5, pady=5)
-        self.progress_details.grid(row=2, column=0, sticky='w', padx=5, pady=5)
-
-        # Statistics frame
-        self.stats_frame.grid(row=3, column=0, columnspan=2,
-                              sticky='ew', padx=5, pady=5)
-        self.processed_label.grid(row=0, column=0, sticky='w', padx=20, pady=2)
-        self.total_label.grid(row=0, column=1, sticky='w', padx=20, pady=2)
-        self.batch_status_label.grid(
-            row=0, column=2, sticky='w', padx=20, pady=2)
-
-        # Files frame
-        self.files_frame.grid(row=1, column=0, sticky='nsew', padx=10, pady=10)
-
-        self.search_frame.grid(row=0, column=0, sticky='ew')
-        self.search_label.grid(row=0, column=0, sticky='w', padx=5)
-        self.search_entry.grid(row=0, column=1, sticky='ew', padx=5)
-
-        self.tree.grid(row=1, column=0, sticky='nsew')
-        self.tree_yscroll.grid(row=1, column=1, sticky='ns')
-
-        # Details frame
-        self.details_frame.grid(
-            row=1, column=1, sticky='nsew', padx=10, pady=10)
-        self.details_text.pack(expand=True, fill='both', padx=5, pady=5)
-
-        # Action frame
-        self.action_frame.grid(
-            row=2, column=0, columnspan=2, sticky='e', padx=10, pady=10)
+        # Action buttons
+        self.action_frame.pack(fill=tk.X, padx=5, pady=5)
+        self.scan_button.pack(side=tk.LEFT, padx=5)
         self.report_button.pack(side=tk.RIGHT, padx=(0, 5))
         self.organize_button.pack(side=tk.RIGHT, padx=(0, 5))
         self.cancel_button.pack(side=tk.RIGHT, padx=(0, 5))
 
-        # Configure grid weights for main_tab (not the root)
-        self.main_tab.grid_columnconfigure(0, weight=3)
-        self.main_tab.grid_columnconfigure(1, weight=2)
-        self.main_tab.grid_rowconfigure(1, weight=1)
+        # Progress frame
+        self.progress_frame.pack(fill=tk.X, padx=5, pady=5)
+        self.progress_bar.pack(fill=tk.X, padx=5, pady=5)
+        self.status_label.pack(anchor=tk.W, padx=5)
+        self.progress_details.pack(anchor=tk.W, padx=5, pady=2)
 
-        self.dir_frame.grid_columnconfigure(1, weight=1)
-        self.files_frame.grid_columnconfigure(0, weight=1)
-        self.files_frame.grid_rowconfigure(1, weight=1)
+        # Stats frame
+        self.stats_frame.pack(fill=tk.X, padx=5, pady=5)
+        self.processed_label.pack(side=tk.LEFT, padx=5)
+        self.total_label.pack(side=tk.LEFT, padx=5)
+        self.batch_status_label.pack(side=tk.LEFT, padx=5)
+
+        # Notebook
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # File list tab
+        self.file_list_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # Search frame
+        self.search_frame.pack(fill=tk.X, padx=5, pady=5)
+        self.search_label.pack(side=tk.LEFT, padx=5)
+        self.search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+
+        # Tree view with scrollbars
+        self.tree_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.tree_scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree_scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Details tab
+        self.details_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.details_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # Settings tab layout
+        self.settings_notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # General settings tab layout
+        # Directory settings
+        self.dir_settings_frame.pack(fill=tk.X, padx=5, pady=5)
+        self.source_settings_label.grid(
+            row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        self.source_settings_entry.grid(
+            row=0, column=1, sticky=tk.EW, padx=5, pady=5)
+        self.source_settings_button.grid(
+            row=0, column=2, sticky=tk.E, padx=5, pady=5)
+        self.target_settings_label.grid(
+            row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        self.target_settings_entry.grid(
+            row=1, column=1, sticky=tk.EW, padx=5, pady=5)
+        self.target_settings_button.grid(
+            row=1, column=2, sticky=tk.E, padx=5, pady=5)
+        self.dir_settings_frame.columnconfigure(1, weight=1)
+
+        # Batch settings
+        self.batch_settings_frame.pack(fill=tk.X, padx=5, pady=5)
+        self.batch_size_label.grid(
+            row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        self.batch_size_entry.grid(
+            row=0, column=1, sticky=tk.W, padx=5, pady=5)
+        self.batch_size_button.grid(
+            row=0, column=2, sticky=tk.W, padx=5, pady=5)
+        self.batch_size_info.grid(
+            row=0, column=3, sticky=tk.W, padx=5, pady=5)
+        self.batch_delay_label.grid(
+            row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        self.batch_delay_entry.grid(
+            row=1, column=1, sticky=tk.W, padx=5, pady=5)
+        self.batch_delay_button.grid(
+            row=1, column=2, sticky=tk.W, padx=5, pady=5)
+        self.batch_delay_info.grid(
+            row=1, column=3, sticky=tk.W, padx=5, pady=5)
+        self.batch_settings_frame.columnconfigure(3, weight=1)
+
+        # Logging settings
+        self.logging_settings_frame.pack(fill=tk.X, padx=5, pady=5)
+        self.log_to_file_only_check.pack(anchor=tk.W, padx=5, pady=5)
+        self.logging_info.pack(anchor=tk.W, padx=5, pady=5)
+
+        # Theme settings
+        self.theme_settings_frame.pack(fill=tk.X, padx=5, pady=5)
+        self.theme_label.grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        self.theme_combo.grid(row=0, column=1, sticky=tk.W, padx=5, pady=5)
+        self.theme_settings_frame.columnconfigure(1, weight=1)
+
+        # Organization settings tab layout
+        self.organization_rules_frame.pack(fill=tk.X, padx=5, pady=5)
+        self.create_folders_check.pack(anchor=tk.W, padx=5, pady=2)
+        self.generate_summaries_check.pack(anchor=tk.W, padx=5, pady=2)
+        self.include_metadata_check.pack(anchor=tk.W, padx=5, pady=2)
+        self.copy_instead_check.pack(anchor=tk.W, padx=5, pady=2)
 
     def browse_source(self):
         """Browse for source directory (Windows style)"""

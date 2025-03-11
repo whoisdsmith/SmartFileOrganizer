@@ -10,6 +10,10 @@ import argparse
 # Add src directory to the path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
+# Version 2 imports
+from ai_document_organizer_v2.core import PluginManager, SettingsManager
+from ai_document_organizer_v2.compatibility import CompatibilityManager
+
 
 def setup_logging(log_to_file_only=False):
     """Set up logging for the application"""
@@ -34,7 +38,9 @@ def setup_logging(log_to_file_only=False):
 
     # Add console handler only if not log_to_file_only
     if not log_to_file_only:
-        handlers.append(logging.StreamHandler())
+        # Use StreamHandler but cast it to avoid LSP type issues
+        console_handler = logging.StreamHandler()
+        handlers.append(console_handler)
 
     logging.basicConfig(
         level=logging.INFO,
@@ -66,18 +72,66 @@ def main():
     parser = argparse.ArgumentParser(description='AI Document Organizer')
     parser.add_argument('--log-to-file-only', action='store_true',
                         help='Log to file only, not to console')
+    parser.add_argument('--use-v2', action='store_true',
+                        help='Use Version 2 plugin architecture (experimental)')
+    parser.add_argument('--test-plugins', action='store_true',
+                        help='Test V2 plugin system and exit')
     args = parser.parse_args()
 
     # Setup logging
     logger = setup_logging(log_to_file_only=args.log_to_file_only)
     logger.info("Starting AI Document Organizer application")
+    
+    # Initialize variables to avoid "possibly unbound" issues
+    plugin_manager = None
+    settings_manager = None
+    compat_manager = None
+    
+    # Initialize V2 plugin system if enabled
+    if args.use_v2 or args.test_plugins:
+        logger.info("Initializing V2 plugin architecture")
+        try:
+            # Initialize plugin system
+            settings_manager = SettingsManager()
+            plugin_manager = PluginManager()
+            
+            # Discover and initialize plugins
+            discovery_results = plugin_manager.discover_plugins()
+            logger.info(f"Discovered {discovery_results['found']} plugins, loaded {discovery_results['loaded']}")
+            
+            if discovery_results['failed'] > 0:
+                logger.warning(f"Failed to load {discovery_results['failed']} plugins")
+                
+            # Initialize plugins
+            init_results = plugin_manager.initialize_plugins()
+            logger.info(f"Initialized {init_results['successful']} plugins")
+            
+            # Set up compatibility layer
+            compat_manager = CompatibilityManager(plugin_manager, settings_manager)
+            logger.info("V2 compatibility layer ready")
+            
+            # If just testing plugins, run the test and exit
+            if args.test_plugins:
+                from ai_document_organizer_v2.test_plugin_system import main as test_main
+                test_main()
+                return
+        except Exception as e:
+            logger.error(f"Error initializing V2 plugin system: {e}")
+            logger.info("Falling back to V1 architecture")
+            args.use_v2 = False
 
     # Windows 10/11 DPI awareness (prevents blurry text)
-    try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(1)
-        logger.info("DPI awareness set successfully")
-    except:
-        logger.warning("Could not set DPI awareness")
+    if os.name == 'nt':  # Windows only
+        try:
+            if hasattr(ctypes, 'windll') and hasattr(ctypes.windll, 'shcore'):
+                ctypes.windll.shcore.SetProcessDpiAwareness(1)
+                logger.info("DPI awareness set successfully")
+            else:
+                logger.warning("Windows DPI awareness API not available")
+        except Exception as e:
+            logger.warning(f"Could not set DPI awareness: {e}")
+    else:
+        logger.debug("DPI awareness setting skipped (non-Windows platform)")
 
     # Create main window
     root = tk.Tk()
@@ -135,12 +189,39 @@ def main():
     except Exception as e:
         logger.warning(f"Could not set theme: {str(e)}")
 
-    # Initialize application
-    app = DocumentOrganizerApp(root)
+    # Initialize application with V2 components if enabled
+    if args.use_v2:
+        try:
+            # Pass V2 components to the app
+            app = DocumentOrganizerApp(root, v2_components={
+                'plugin_manager': plugin_manager,
+                'settings_manager': settings_manager,
+                'compat_manager': compat_manager,
+                'use_v2': True
+            })
+            logger.info("Initialized application with V2 plugin architecture")
+        except Exception as e:
+            logger.error(f"Error initializing app with V2 components: {e}")
+            logger.info("Falling back to V1 architecture")
+            app = DocumentOrganizerApp(root)
+    else:
+        # Standard V1 initialization
+        app = DocumentOrganizerApp(root)
 
     # Start the application main loop
     logger.info("Entering main application loop")
     root.mainloop()
+    
+    # Clean up V2 plugin system if used
+    if args.use_v2 and plugin_manager is not None:
+        try:
+            # Shutdown plugins
+            shutdown_results = plugin_manager.shutdown_plugins()
+            logger.info(f"Shutdown {shutdown_results['successful']} plugins")
+            if shutdown_results['failed'] > 0:
+                logger.warning(f"Failed to shutdown {shutdown_results['failed']} plugins")
+        except Exception as e:
+            logger.error(f"Error shutting down plugin system: {e}")
 
     logger.info("Application closed")
 

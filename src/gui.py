@@ -36,12 +36,27 @@ class DocumentOrganizerApp:
         except Exception:
             return os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', relative_path)
 
-    def __init__(self, root):
-        """Initialize the application"""
+    def __init__(self, root, v2_components=None):
+        """
+        Initialize the application
+        
+        Args:
+            root: Tkinter root window
+            v2_components: Optional dictionary with V2 components
+        """
         self.root = root
         self.root.title("AI Document Organizer")
         self.root.geometry("1200x800")
         self.root.minsize(1000, 700)
+        
+        # V2 architecture flag
+        self.use_v2 = False
+        
+        # Store V2 components if provided
+        if v2_components and isinstance(v2_components, dict):
+            self.v2_components = v2_components
+            self.use_v2 = v2_components.get('use_v2', False)
+            logger.info(f"Using V2 plugin architecture: {self.use_v2}")
 
         # Set icon if available
         try:
@@ -54,10 +69,49 @@ class DocumentOrganizerApp:
         except Exception as e:
             logger.warning(f"Could not set application icon: {e}")
 
-        # Initialize components
-        self.file_analyzer = FileAnalyzer()
-        self.file_organizer = FileOrganizer()
-        self.settings_manager = SettingsManager()
+        # Initialize components based on architecture version
+        if self.use_v2:
+            # Use V2 components and compatibility layer
+            try:
+                logger.info("Initializing with V2 components")
+                plugin_manager = v2_components.get('plugin_manager')
+                compat_manager = v2_components.get('compat_manager')
+                
+                # Safety check for component existence
+                if plugin_manager is None or compat_manager is None:
+                    logger.error("Required V2 components missing (plugin_manager or compat_manager)")
+                    raise ValueError("Missing required V2 components")
+                
+                # Use compatibility layer to create V1-compatible instances
+                file_parser_adapter = compat_manager.get_adapter('FileParser') if compat_manager else None
+                file_organizer_adapter = compat_manager.get_adapter('FileOrganizer') if compat_manager else None
+                ai_analyzer_adapter = compat_manager.get_adapter('AIAnalyzer') if compat_manager else None
+                settings_adapter = compat_manager.get_adapter('SettingsManager') if compat_manager else None
+                duplicate_detector_adapter = compat_manager.get_adapter('DuplicateDetector') if compat_manager else None
+                
+                # Create V1-compatible instances through adapters
+                self.file_analyzer = FileAnalyzer()  # Keep V1 for now, will adapt later
+                self.file_organizer = file_organizer_adapter.create_instance()
+                self.settings_manager = settings_adapter.create_instance()
+                
+                # Store plugin manager and compatibility manager for future use
+                self.plugin_manager = plugin_manager
+                self.compat_manager = compat_manager
+                
+                # Add V2 version indicator to title
+                self.root.title("AI Document Organizer (V2) - Powered by Google Gemini")
+            except Exception as e:
+                logger.error(f"Error initializing with V2 components: {e}")
+                logger.warning("Falling back to V1 components")
+                self.use_v2 = False
+                self.file_analyzer = FileAnalyzer()
+                self.file_organizer = FileOrganizer()
+                self.settings_manager = SettingsManager()
+        else:
+            # Standard V1 initialization
+            self.file_analyzer = FileAnalyzer()
+            self.file_organizer = FileOrganizer()
+            self.settings_manager = SettingsManager()
         self.duplicate_detector = DuplicateDetector()
         self.search_engine = SearchEngine()
         self.tag_manager = TagManager()

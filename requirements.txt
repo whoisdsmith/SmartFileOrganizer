@@ -92,3 +92,6 @@ Pillow
 pydub
 PyPDF2
 python-docx
+PyPDF2
+PyPDF2
+pypdf

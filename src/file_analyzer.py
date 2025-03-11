@@ -116,15 +116,15 @@ class FileAnalyzer:
         self.resource_monitor.start()
 
         try:
-            # Get all files in the directory and subdirectories
+        # Get all files in the directory and subdirectories
             if not resume or not self.job_state[job_id]['pending_files']:
-                all_files = []
-                for root, _, files in os.walk(directory_path):
-                    for file in files:
-                        file_path = os.path.join(root, file)
-                        file_ext = os.path.splitext(file_path)[1].lower()
-                        if file_ext in self.supported_extensions:
-                            all_files.append((file_path, file_ext))
+        all_files = []
+        for root, _, files in os.walk(directory_path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                file_ext = os.path.splitext(file_path)[1].lower()
+                if file_ext in self.supported_extensions:
+                    all_files.append((file_path, file_ext))
 
                 self.job_state[job_id]['pending_files'] = all_files
                 self.job_state[job_id]['total_files'] = len(all_files)
@@ -144,8 +144,8 @@ class FileAnalyzer:
             if callback:
                 callback(len(processed_files), total_files, f"Found {len(all_files)} files to process")
 
-            # Process files in batches
-            results = []
+        # Process files in batches
+        results = []
             processed_count = len(processed_files)
 
             # Add already processed files to results
@@ -190,23 +190,23 @@ class FileAnalyzer:
                 if use_processes:
                     batch_results = self._process_batch_with_processes(batch)
                 else:
-                    batch_results = self._process_batch(batch)
+            batch_results = self._process_batch(batch)
 
                 # Update results and processed count
-                results.extend(batch_results)
+            results.extend(batch_results)
                 processed_count += len(batch_results)
 
                 # Update job state
                 self.job_state[job_id]['pending_files'] = all_files[i+self.batch_size:]
                 self.job_state[job_id]['processed_files'] = results
 
-                # Update progress
+            # Update progress
                 if callback:
                     callback(processed_count, total_files, f"Processed {processed_count}/{total_files} files")
 
                 # Delay between batches if not the last batch
                 if i + self.batch_size < len(all_files) and not self.is_cancelled and not self.is_paused:
-                    time.sleep(self.batch_delay)
+                time.sleep(self.batch_delay)
 
             # Mark job as completed if not cancelled or paused
             if not self.is_cancelled and not self.is_paused:
@@ -221,7 +221,7 @@ class FileAnalyzer:
                 if callback:
                     callback(total_files, total_files, f"Completed processing {total_files} files")
 
-            return results
+        return results
 
         except Exception as e:
             logger.error(f"Error scanning directory: {str(e)}")
@@ -684,4 +684,4 @@ class ResourceMonitor:
             return {
                 'cpu_percent': self.cpu_percent,
                 'memory_percent': self.memory_percent
-            }
+        }

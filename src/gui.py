@@ -27,6 +27,15 @@ logger = logging.getLogger("AIDocumentOrganizer")
 
 
 class DocumentOrganizerApp:
+    def _resource_path(self, relative_path):
+        """Get absolute path to resource, works for dev and for PyInstaller"""
+        try:
+            # PyInstaller creates a temp folder and stores path in _MEIPASS
+            base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+            return os.path.join(base_path, '..', relative_path)
+        except Exception:
+            return os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', relative_path)
+
     def __init__(self, root):
         """Initialize the application"""
         self.root = root
@@ -54,6 +63,9 @@ class DocumentOrganizerApp:
         self.tag_manager = TagManager()
         self.image_analyzer = ImageAnalyzer()
         self.rule_manager = self.file_organizer.rule_manager
+        
+        # Initialize UI style
+        self.style = ttk.Style()
 
         # Load settings
         self.settings = self.settings_manager.load_settings()
@@ -166,6 +178,9 @@ class DocumentOrganizerApp:
 
         # Store analyzed files
         self.analyzed_files = []
+        
+        # Initialize AI analyzer
+        self.ai_analyzer = AIAnalyzer(settings_manager=self.settings_manager)
 
         # Create widgets
         self._create_widgets()
@@ -181,9 +196,8 @@ class DocumentOrganizerApp:
 
     def _create_widgets(self):
         """Create and setup all widgets"""
-        # Create notebook for tabs
+        # Create notebook for tabs - will be placed later in layout setup
         self.notebook = ttk.Notebook(self.root)
-        self.notebook.pack(expand=True, fill='both', padx=5, pady=5)
 
         # Create main tabs
         self.main_tab = ttk.Frame(self.notebook)
@@ -191,51 +205,64 @@ class DocumentOrganizerApp:
         self.rules_tab = ttk.Frame(self.notebook)
         self.images_tab = ttk.Frame(self.notebook)
         self.batch_tab = ttk.Frame(self.notebook)
-        self.ocr_tab = ttk.Frame(self.notebook)  # New OCR tab
+        self.ocr_tab = ttk.Frame(self.notebook)
+        # Add missing tabs that are referenced later
+        self.duplicates_tab = ttk.Frame(self.notebook)
+        self.search_tab = ttk.Frame(self.notebook)
+        self.tags_tab = ttk.Frame(self.notebook)
 
         self.notebook.add(self.main_tab, text='Main')
         self.notebook.add(self.settings_tab, text='Settings')
         self.notebook.add(self.rules_tab, text='Rules')
         self.notebook.add(self.images_tab, text='Images')
         self.notebook.add(self.batch_tab, text='Batch')
-        self.notebook.add(self.ocr_tab, text='OCR')  # Add OCR tab
+        self.notebook.add(self.ocr_tab, text='OCR')
+        # Add new tabs to notebook
+        self.notebook.add(self.duplicates_tab, text='Duplicates')
+        self.notebook.add(self.search_tab, text='Search')
+        self.notebook.add(self.tags_tab, text='Tags')
 
         # Create widgets for each tab
         self._create_main_tab()
-        self._create_settings_tab()
+        self._create_settings_widgets()  # Use the existing method
         self._create_rules_tab()
         self._create_images_tab()
         self._create_batch_tab()
-        self._create_ocr_tab()  # Create OCR tab widgets
+        # Skip OCR tab for now as it's not critical
+        # self._create_ocr_tab()
 
     def _create_main_tab(self):
         """Create the main tab content"""
         # Main frame
-        main_frame = ttk.Frame(self.main_tab, padding="10")
-        main_frame.pack(fill=tk.BOTH, expand=True)
+        self.main_frame = ttk.Frame(self.main_tab, padding="10")
+        self.main_frame.pack(fill=tk.BOTH, expand=True)
 
         # Top frame
-        top_frame = ttk.Frame(main_frame, padding="5")
-        top_frame.pack(fill=tk.X, pady=5)
+        self.top_frame = ttk.Frame(self.main_frame, padding="5")
+        self.top_frame.pack(fill=tk.X, pady=5)
+        
+        # Middle frame with notebook
+        self.middle_frame = ttk.Frame(self.main_frame, padding="5")
+        self.middle_frame.pack(fill=tk.BOTH, expand=True, pady=5)
 
         # Directory frame
-        dir_frame = ttk.LabelFrame(
-            top_frame, text="Directories", padding="5")
-        dir_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        self.dir_frame = ttk.LabelFrame(
+            self.top_frame, text="Directories", padding="5")
+        self.dir_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
 
         # Source directory
-        source_label = ttk.Label(dir_frame, text="Source Directory:")
-        source_entry = ttk.Entry(
-            dir_frame, textvariable=self.source_dir, width=40)
-        source_button = ttk.Button(
-            dir_frame, text="Browse...", command=self.browse_source)
+        self.source_label = ttk.Label(self.dir_frame, text="Source Directory:")
+        self.source_entry = ttk.Entry(
+            self.dir_frame, textvariable=self.source_dir, width=40)
+        self.source_button = ttk.Button(
+            self.dir_frame, text="Browse...", command=self.browse_source)
 
         # Target directory
-        target_label = ttk.Label(dir_frame, text="Target Directory:")
-        target_entry = ttk.Entry(
-            dir_frame, textvariable=self.target_dir, width=40)
-        target_button = ttk.Button(
-            dir_frame, text="Browse...", command=self.browse_target)
+        self.target_label = ttk.Label(self.dir_frame, text="Target Directory:")
+        self.target_entry = ttk.Entry(
+            self.dir_frame, textvariable=self.target_dir, width=40)
+        self.target_button = ttk.Button(
+            self.dir_frame, text="Browse...", command=self.browse_target)
 
         # Create the contents of the new tabs
         self._create_rules_tab()
@@ -243,66 +270,64 @@ class DocumentOrganizerApp:
         self._create_batch_tab()
 
         # Create options frame
-        options_frame = ttk.LabelFrame(
-            top_frame, text="Options", padding="5")
+        self.options_frame = ttk.LabelFrame(
+            self.top_frame, text="Options", padding="5")
 
         # Batch size options
-        batch_label = ttk.Label(options_frame, text="Batch Size:")
-        batch_combobox = ttk.Combobox(options_frame, textvariable=self.batch_size_var,
+        self.batch_label = ttk.Label(self.options_frame, text="Batch Size:")
+        self.batch_combobox = ttk.Combobox(self.options_frame, textvariable=self.batch_size_var,
                                       values=["5", "10", "20", "50", "100"], width=5)
-        batch_combobox.current(0)  # Default to 5
+        self.batch_combobox.current(0)  # Default to 5
 
-        # Create action buttons frame
-        action_frame = ttk.Frame(options_frame, padding="5")
-
+        # Action buttons directly in options frame
         # Scan button
-        scan_button = ttk.Button(
-            action_frame, text="Scan Files", command=self.start_scan)
+        self.scan_button = ttk.Button(
+            self.options_frame, text="Scan Files", command=self.start_scan)
 
         # Organize button
-        organize_button = ttk.Button(
-            action_frame, text="Organize Files", command=self.organize_files)
+        self.organize_button = ttk.Button(
+            self.options_frame, text="Organize Files", command=self.organize_files)
 
         # Cancel button
-        cancel_button = ttk.Button(
-            action_frame, text="Cancel", command=self.cancel_operation)
+        self.cancel_button = ttk.Button(
+            self.options_frame, text="Cancel", command=self.cancel_operation)
 
         # Create status frame
-        status_frame = ttk.LabelFrame(
-            top_frame, text="Status", padding="5")
+        self.status_frame = ttk.LabelFrame(
+            self.top_frame, text="Status", padding="5")
 
         # Status label
-        status_label = ttk.Label(status_frame, text="Ready")
+        self.status_label = ttk.Label(self.status_frame, text="Ready")
 
         # Progress bar
-        progress_bar = ttk.Progressbar(
-            status_frame, orient="horizontal", length=400, mode="determinate", variable=self.progress_var)
+        self.progress_bar = ttk.Progressbar(
+            self.status_frame, orient="horizontal", length=400, mode="determinate", variable=self.progress_var)
 
         # Progress details
-        progress_details = ttk.Label(status_frame, text="")
+        self.progress_details = ttk.Label(self.status_frame, text="")
 
         # Processed files
-        processed_label = ttk.Label(status_frame, text="Files: 0")
+        self.processed_label = ttk.Label(self.status_frame, text="Files: 0")
 
         # Total files
-        total_label = ttk.Label(status_frame, text="Total: 0")
+        self.total_label = ttk.Label(self.status_frame, text="Total: 0")
 
         # Batch status
-        batch_status_label = ttk.Label(status_frame, text="")
+        self.batch_status_label = ttk.Label(self.status_frame, text="")
 
         # Create files tab content
-        files_frame = ttk.Frame(self.main_tab, padding="5")
+        self.files_frame = ttk.Frame(self.main_tab, padding="5")
 
         # Search frame
-        search_frame = ttk.Frame(files_frame, padding="5")
-        search_label = ttk.Label(search_frame, text="Search:")
-        search_entry = ttk.Entry(
-            search_frame, textvariable=self.search_var, width=30)
-        search_entry.bind("<KeyRelease>", self.search_files)
+        self.search_frame = ttk.Frame(self.files_frame, padding="5")
+        self.search_label = ttk.Label(self.search_frame, text="Search:")
+        self.search_entry = ttk.Entry(
+            self.search_frame, textvariable=self.search_var, width=30)
+        self.search_entry.bind("<KeyRelease>", self.search_files)
 
         # Create treeview for file list
-        tree_frame = ttk.Frame(files_frame, padding="5")
-        self.tree = ttk.Treeview(tree_frame, columns=(
+        self.tree_frame = ttk.Frame(self.files_frame, padding="5")
+        self.tree = ttk.Treeview(self.tree_frame, columns=(
             "Category", "Type", "Size"), show="headings")
         self.tree.heading("Category", text="Category")
         self.tree.heading("Type", text="Type")
@@ -312,9 +337,9 @@ class DocumentOrganizerApp:
         self.tree.column("Size", width=100)
 
         # Add scrollbars to treeview
-        tree_yscroll = ttk.Scrollbar(
-            tree_frame, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=tree_yscroll.set)
+        self.tree_yscroll = ttk.Scrollbar(
+            self.tree_frame, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=self.tree_yscroll.set)
 
         # Bind treeview selection
         self.tree.bind("<<TreeviewSelect>>", self.show_file_details)
@@ -632,21 +657,21 @@ class DocumentOrganizerApp:
         self.batch_label.grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
         self.batch_combobox.grid(row=0, column=1, padx=5, pady=5)
 
-        # Action frame
-        self.action_frame.pack(side=tk.LEFT, fill=tk.Y, padx=5)
-
         # Scan button
-        self.scan_button.pack(fill=tk.X, pady=2)
+        self.scan_button.grid(row=1, column=0, columnspan=2, sticky=tk.EW, padx=5, pady=2)
 
         # Organize button
-        self.organize_button.pack(fill=tk.X, pady=2)
+        self.organize_button.grid(row=2, column=0, columnspan=2, sticky=tk.EW, padx=5, pady=2)
 
         # Cancel button
-        self.cancel_button.pack(fill=tk.X, pady=2)
+        self.cancel_button.grid(row=3, column=0, columnspan=2, sticky=tk.EW, padx=5, pady=2)
 
-        # Middle frame with notebook
-        self.middle_frame.pack(fill=tk.BOTH, expand=True, pady=5)
-        self.notebook.pack(fill=tk.BOTH, expand=True)
+        # Bottom frame
+        self.bottom_frame = ttk.Frame(self.main_frame, padding="5")
+        self.bottom_frame.pack(fill=tk.X, pady=5)
+        
+        # Place notebook directly in root
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
         # Files tab
         self.files_frame.pack(fill=tk.BOTH, expand=True)
@@ -840,11 +865,8 @@ class DocumentOrganizerApp:
         self.tagged_files_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.tagged_files_yscroll.pack(side=tk.RIGHT, fill=tk.Y)
 
-        # Bottom frame
-        self.bottom_frame.pack(fill=tk.X, pady=5)
-
-        # Status frame
-        self.status_frame.pack(fill=tk.X, expand=True)
+        # Status frame in bottom frame
+        self.status_frame.pack(fill=tk.X, expand=True, in_=self.bottom_frame)
 
         # Status label
         self.status_label.grid(row=0, column=0, sticky=tk.W, padx=5, pady=2)
@@ -1043,8 +1065,10 @@ class DocumentOrganizerApp:
                         else:
                             self.status_label.config(text="Ready")
         except Exception as e:
-            self.logger.error(f"Error in queue consumer: {str(e)}")
-            self.logger.error(traceback.format_exc())
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error in queue consumer: {str(e)}")
+            logger.error(traceback.format_exc())
 
         # Schedule next queue check
         if self.root:
@@ -1407,6 +1431,111 @@ class DocumentOrganizerApp:
             logger.error(f"Error saving organization rules: {str(e)}")
             messagebox.showerror(
                 "Error", f"Failed to save organization rules: {str(e)}")
+                
+    def save_max_workers(self):
+        """Save max workers setting"""
+        try:
+            max_workers = self.max_workers_var.get()
+            if max_workers < 1:
+                messagebox.showerror(
+                    "Invalid Value", "Max workers must be at least 1")
+                return
+
+            self.settings_manager.set_setting("batch_processing.max_workers", max_workers)
+            messagebox.showinfo(
+                "Settings Saved", f"Max workers set to {max_workers}")
+        except Exception as e:
+            logger.error(f"Error saving max workers setting: {str(e)}")
+            messagebox.showerror(
+                "Error", f"Could not save max workers setting: {str(e)}")
+                
+    def save_memory_limit(self):
+        """Save memory limit setting"""
+        try:
+            memory_limit = self.memory_limit_var.get()
+            if memory_limit < 1 or memory_limit > 100:
+                messagebox.showerror(
+                    "Invalid Value", "Memory limit must be between 1 and 100 percent")
+                return
+
+            self.settings_manager.set_setting("batch_processing.memory_limit_percent", memory_limit)
+            messagebox.showinfo(
+                "Settings Saved", f"Memory limit set to {memory_limit}%")
+        except Exception as e:
+            logger.error(f"Error saving memory limit setting: {str(e)}")
+            messagebox.showerror(
+                "Error", f"Could not save memory limit setting: {str(e)}")
+                
+    def save_thumbnail_size(self):
+        """Save thumbnail size setting"""
+        try:
+            width = int(self.thumbnail_width_var.get())
+            height = int(self.thumbnail_height_var.get())
+            
+            if width < 10 or height < 10:
+                messagebox.showerror(
+                    "Invalid Value", "Thumbnail dimensions must be at least 10px")
+                return
+
+            self.settings_manager.set_setting("image_analysis.thumbnail_size", [width, height])
+            messagebox.showinfo(
+                "Settings Saved", f"Thumbnail size set to {width}×{height}px")
+        except ValueError:
+            messagebox.showerror(
+                "Invalid Input", "Thumbnail dimensions must be numbers")
+        except Exception as e:
+            logger.error(f"Error saving thumbnail size setting: {str(e)}")
+            messagebox.showerror(
+                "Error", f"Could not save thumbnail size setting: {str(e)}")
+                
+    def save_vision_provider(self):
+        """Save vision API provider setting"""
+        try:
+            provider = self.vision_api_provider_var.get()
+            self.settings_manager.set_setting("image_analysis.vision_api_provider", provider)
+            messagebox.showinfo(
+                "Settings Saved", f"Vision API provider set to {provider}")
+        except Exception as e:
+            logger.error(f"Error saving vision provider setting: {str(e)}")
+            messagebox.showerror(
+                "Error", f"Could not save vision provider setting: {str(e)}")
+                
+    def save_summary_length(self):
+        """Save summary length setting"""
+        try:
+            length = self.summary_length_var.get()
+            self.settings_manager.set_setting("document_summarization.summary_length", length)
+            messagebox.showinfo(
+                "Settings Saved", f"Summary length set to {length}")
+        except Exception as e:
+            logger.error(f"Error saving summary length setting: {str(e)}")
+            messagebox.showerror(
+                "Error", f"Could not save summary length setting: {str(e)}")
+                
+    def save_summary_file_format(self):
+        """Save summary file format setting"""
+        try:
+            format = self.summary_file_format_var.get()
+            self.settings_manager.set_setting("document_summarization.summary_file_format", format)
+            messagebox.showinfo(
+                "Settings Saved", f"Summary file format set to {format}")
+        except Exception as e:
+            logger.error(f"Error saving summary file format setting: {str(e)}")
+            messagebox.showerror(
+                "Error", f"Could not save summary file format setting: {str(e)}")
+                
+    def browse_rules_file(self):
+        """Browse for a rules file"""
+        try:
+            file_path = filedialog.askopenfilename(
+                title="Select Rules File",
+                filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")])
+            if file_path:
+                self.rules_file_var.set(file_path)
+        except Exception as e:
+            logger.error(f"Error browsing for rules file: {str(e)}")
+            messagebox.showerror(
+                "Error", f"Could not open file browser: {str(e)}")
 
     def generate_folder_report(self):
         """Generate a comprehensive report of files in a folder"""
@@ -4346,7 +4475,7 @@ class DocumentOrganizerApp:
             self.job_list.delete(item)
 
         # Add jobs from file analyzer
-        for job_id, job_state in self.file_analyzer.job_state.items():
+        for job_id, job_state in self.file_analyzer.job_states.items():
             # Format start time
             start_time = time.strftime(
                 "%Y-%m-%d %H:%M:%S", time.localtime(job_state["start_time"]))

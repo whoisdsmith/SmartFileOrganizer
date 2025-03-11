@@ -64,3 +64,24 @@ pdf2image>=1.16.3
 PyMuPDF>=1.23.0  # For PDF manipulation
 img2pdf>=0.4.4   # For image to PDF conversion
 python-magic>=0.4.27  # For MIME type detection
+beautifulsoup4
+google-generativeai
+markdown
+openai
+openpyxl
+pandas
+pillow
+psutil
+PyPDF2
+python-docx
+python-dotenv
+requests
+tqdm
+dropbox
+exifread
+ffmpeg-python
+google-auth-oauthlib
+moviepy
+pydub
+pyyaml
+pillow

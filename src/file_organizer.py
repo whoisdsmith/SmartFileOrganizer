@@ -228,13 +228,13 @@ class FileOrganizer:
 
                 # Copy or move the file
                 try:
-                if options["copy_instead_of_move"]:
-                    shutil.copy2(file_path, target_path)
-                else:
-                    shutil.move(file_path, target_path)
+                    if options["copy_instead_of_move"]:
+                        shutil.copy2(file_path, target_path)
+                    else:
+                        shutil.move(file_path, target_path)
 
                     # Generate summary file if enabled
-                if options["generate_summaries"]:
+                    if options["generate_summaries"]:
                         self._generate_summary_file(
                             file_info, target_path, options)
 

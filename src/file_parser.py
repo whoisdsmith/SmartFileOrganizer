@@ -29,7 +29,7 @@ class FileParser:
     def __init__(self, config: Optional[Dict] = None):
         """Initialize FileParser with optional configuration."""
         self.config = config or {}
-        self.ocr_service = OCRService(config.get('ocr_config', {}))
+        self.ocr_service = OCRService(self.config.get('ocr_config', {}))
 
     def extract_text(self, file_path, file_ext):
         """

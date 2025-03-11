@@ -43,6 +43,19 @@ class SearchEngine:
         self.settings = {**self.default_settings,
                          **self.config.get('search', {})}
 
+        # Database settings
+        # Determine database path based on platform
+        if os.name == 'nt':  # Windows
+            db_dir = os.path.join(os.path.expanduser("~"), "AppData", "Local", "AIDocumentOrganizer")
+        else:  # macOS/Linux
+            db_dir = os.path.join(os.path.expanduser("~"), ".config", "AIDocumentOrganizer")
+            
+        # Create database directory if it doesn't exist
+        os.makedirs(db_dir, exist_ok=True)
+        
+        # Set database path
+        self.db_path = os.path.join(db_dir, "document_index.db")
+        
         self.progress_callback = None
         self._initialize_database()
 

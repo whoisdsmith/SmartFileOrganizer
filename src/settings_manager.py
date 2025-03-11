@@ -110,13 +110,7 @@ class SettingsManager:
     def __init__(self, config_path: Optional[str] = None):
         """Initialize settings manager with optional config path."""
         self.logger = logging.getLogger(__name__)
-        self.config_path = config_path or os.path.join(
-            os.path.expanduser('~'),
-            '.smartfileorganizer',
-            'config.json'
-        )
-        self.settings = self.load_settings()
-
+        
         # Determine settings directory based on platform
         if os.name == 'nt':  # Windows
             self.settings_dir = os.path.join(os.path.expanduser(
@@ -127,9 +121,14 @@ class SettingsManager:
 
         # Create settings directory if it doesn't exist
         os.makedirs(self.settings_dir, exist_ok=True)
-
-        # Path to settings file
-        self.settings_file = os.path.join(self.settings_dir, "settings.json")
+        
+        # Set the settings file path
+        self.settings_file = config_path or os.path.join(self.settings_dir, "settings.json")
+        
+        # For backward compatibility
+        self.config_path = self.settings_file
+        
+        self.settings = self.load_settings()
 
     def get_api_key(self, service_type):
         """

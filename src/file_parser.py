@@ -4,6 +4,11 @@ from bs4 import BeautifulSoup
 import docx
 import chardet
 import PyPDF2
+from PIL import Image
+from PIL.ExifTags import TAGS, GPSTAGS
+import io
+import datetime
+
 
 class FileParser:
     """
@@ -35,6 +40,8 @@ class FileParser:
             return self._parse_docx(file_path)
         elif file_ext == '.pdf':
             return self._parse_pdf(file_path)
+        elif file_ext.lower() in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp']:
+            return self._parse_image(file_path)
         else:
             raise ValueError(f"Unsupported file extension: {file_ext}")
 
@@ -47,74 +54,60 @@ class FileParser:
             file_ext: File extension (including the dot)
 
         Returns:
-            Dictionary of metadata
+            Dictionary with metadata
         """
-        metadata = {}
-
-        # Basic file metadata
+        # Basic metadata for all files
         file_stat = os.stat(file_path)
-        metadata['file_size'] = file_stat.st_size
-        metadata['created_time'] = file_stat.st_ctime
-        metadata['modified_time'] = file_stat.st_mtime
-        metadata['accessed_time'] = file_stat.st_atime
+        metadata = {
+            'filename': os.path.basename(file_path),
+            'file_size': file_stat.st_size,
+            'created_time': datetime.datetime.fromtimestamp(file_stat.st_ctime).isoformat(),
+            'modified_time': datetime.datetime.fromtimestamp(file_stat.st_mtime).isoformat(),
+            'file_extension': file_ext,
+        }
 
         # File type specific metadata
-        if file_ext == '.csv':
+        if file_ext == '.pdf':
             try:
-                df = pd.read_csv(file_path)
-                metadata['row_count'] = len(df)
-                metadata['column_count'] = len(df.columns)
-                metadata['columns'] = list(df.columns)
+                with open(file_path, 'rb') as file:
+                    reader = PyPDF2.PdfReader(file)
+                    if reader.metadata:
+                        for key, value in reader.metadata.items():
+                            if key.startswith('/'):
+                                clean_key = key[1:].lower()
+                                metadata[clean_key] = value
+                    metadata['page_count'] = len(reader.pages)
             except Exception as e:
-                metadata['error'] = str(e)
-
-        elif file_ext == '.xlsx':
-            try:
-                xl = pd.ExcelFile(file_path)
-                metadata['sheet_names'] = xl.sheet_names
-                metadata['sheet_count'] = len(xl.sheet_names)
-
-                # Get row and column counts for the first sheet
-                df = pd.read_excel(file_path, sheet_name=0)
-                metadata['row_count'] = len(df)
-                metadata['column_count'] = len(df.columns)
-            except Exception as e:
-                metadata['error'] = str(e)
+                metadata['extraction_error'] = str(e)
 
         elif file_ext == '.docx':
             try:
                 doc = docx.Document(file_path)
+                metadata['page_count'] = len(doc.sections)
                 metadata['paragraph_count'] = len(doc.paragraphs)
-                metadata['section_count'] = len(doc.sections)
 
                 # Try to extract core properties
                 try:
                     core_props = doc.core_properties
-                    metadata['author'] = core_props.author
-                    metadata['created'] = core_props.created
-                    metadata['last_modified_by'] = core_props.last_modified_by
-                    metadata['modified'] = core_props.modified
-                    metadata['title'] = core_props.title
-                    metadata['subject'] = core_props.subject
+                    if hasattr(core_props, 'author') and core_props.author:
+                        metadata['author'] = core_props.author
+                    if hasattr(core_props, 'title') and core_props.title:
+                        metadata['title'] = core_props.title
+                    if hasattr(core_props, 'created') and core_props.created:
+                        metadata['doc_created'] = core_props.created.isoformat()
+                    if hasattr(core_props, 'modified') and core_props.modified:
+                        metadata['doc_modified'] = core_props.modified.isoformat()
                 except:
                     pass
             except Exception as e:
-                metadata['error'] = str(e)
+                metadata['extraction_error'] = str(e)
 
-        elif file_ext == '.pdf':
+        elif file_ext.lower() in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp']:
             try:
-                with open(file_path, 'rb') as file:
-                    reader = PyPDF2.PdfReader(file)
-                    metadata['page_count'] = len(reader.pages)
-
-                    # Extract document info if available
-                    if reader.metadata:
-                        info = reader.metadata
-                        for key in info:
-                            if info[key] and str(info[key]).strip():
-                                metadata[key.lower()] = str(info[key])
+                image_metadata = self._extract_image_metadata(file_path)
+                metadata.update(image_metadata)
             except Exception as e:
-                metadata['error'] = str(e)
+                metadata['extraction_error'] = str(e)
 
         return metadata
 
@@ -258,12 +251,167 @@ class FileParser:
             with open(file_path, 'rb') as file:
                 reader = PyPDF2.PdfReader(file)
 
+                # Check if PDF is encrypted
+                if reader.is_encrypted:
+                    try:
+                        # Try with empty password first
+                        reader.decrypt('')
+                    except:
+                        return "Error: This PDF is password-protected and cannot be read."
+
                 # Extract text from each page
                 for page_num in range(len(reader.pages)):
                     page = reader.pages[page_num]
-                    text_content += page.extract_text() + "\n\n"
+                    try:
+                        page_text = page.extract_text()
+                        if page_text:
+                            text_content += f"--- Page {page_num + 1} ---\n{page_text}\n\n"
+                        else:
+                            text_content += f"--- Page {page_num + 1} ---\n[No extractable text on this page - may contain images only]\n\n"
+                    except Exception as e:
+                        text_content += f"--- Page {page_num + 1} ---\n[Error extracting text: {str(e)}]\n\n"
+
+            if not text_content.strip():
+                return "This PDF does not contain extractable text. It may be scanned or image-based."
 
             return text_content.strip()
         except Exception as e:
             # Handle potential errors (corrupted PDF, password-protected, etc.)
             return f"Error extracting text from PDF: {str(e)}"
+
+    def _parse_image(self, file_path):
+        """
+        Extract any text content from image (placeholder for OCR integration)
+
+        Args:
+            file_path: Path to the image file
+
+        Returns:
+            String with basic image information (no OCR yet)
+        """
+        try:
+            with Image.open(file_path) as img:
+                # Basic image information
+                width, height = img.size
+                format_name = img.format
+                mode = img.mode
+
+                # Create a basic text representation
+                text = f"Image: {os.path.basename(file_path)}\n"
+                text += f"Dimensions: {width}x{height} pixels\n"
+                text += f"Format: {format_name}\n"
+                text += f"Color Mode: {mode}\n"
+
+                # Add EXIF data summary if available
+                exif_data = self._extract_image_metadata(file_path)
+                if exif_data:
+                    text += "\nImage Metadata:\n"
+                    for key, value in exif_data.items():
+                        if key not in ['filename', 'file_size', 'created_time', 'modified_time', 'file_extension']:
+                            text += f"{key}: {value}\n"
+
+                return text
+        except Exception as e:
+            return f"Error parsing image: {str(e)}"
+
+    def _extract_image_metadata(self, file_path):
+        """
+        Extract metadata from image files including EXIF data
+
+        Args:
+            file_path: Path to the image file
+
+        Returns:
+            Dictionary with image metadata
+        """
+        metadata = {}
+
+        try:
+            with Image.open(file_path) as img:
+                # Basic image properties
+                metadata['image_width'], metadata['image_height'] = img.size
+                metadata['image_format'] = img.format
+                metadata['image_mode'] = img.mode
+
+                # Extract EXIF data if available
+                if hasattr(img, '_getexif') and img._getexif():
+                    exif = img._getexif()
+                    if exif:
+                        # Process standard EXIF tags
+                        for tag_id, value in exif.items():
+                            tag = TAGS.get(tag_id, tag_id)
+
+                            # Handle special cases
+                            if tag == 'GPSInfo':
+                                gps_data = {}
+                                for gps_tag_id, gps_value in value.items():
+                                    gps_tag = GPSTAGS.get(gps_tag_id, gps_tag_id)
+                                    gps_data[gps_tag] = gps_value
+
+                                # Calculate latitude and longitude if available
+                                if 'GPSLatitude' in gps_data and 'GPSLatitudeRef' in gps_data:
+                                    lat = self._convert_to_degrees(gps_data['GPSLatitude'])
+                                    if gps_data['GPSLatitudeRef'] == 'S':
+                                        lat = -lat
+                                    metadata['gps_latitude'] = lat
+
+                                if 'GPSLongitude' in gps_data and 'GPSLongitudeRef' in gps_data:
+                                    lon = self._convert_to_degrees(gps_data['GPSLongitude'])
+                                    if gps_data['GPSLongitudeRef'] == 'W':
+                                        lon = -lon
+                                    metadata['gps_longitude'] = lon
+
+                                if 'GPSAltitude' in gps_data:
+                                    metadata['gps_altitude'] = float(gps_data['GPSAltitude'])
+
+                                metadata['gps_data'] = gps_data
+                            elif tag == 'DateTime':
+                                metadata['date_time'] = value
+                            elif tag == 'DateTimeOriginal':
+                                metadata['date_time_original'] = value
+                            elif tag == 'DateTimeDigitized':
+                                metadata['date_time_digitized'] = value
+                            elif tag == 'Make':
+                                metadata['camera_make'] = value
+                            elif tag == 'Model':
+                                metadata['camera_model'] = value
+                            elif tag == 'XResolution':
+                                metadata['x_resolution'] = float(value)
+                            elif tag == 'YResolution':
+                                metadata['y_resolution'] = float(value)
+                            elif tag == 'ExposureTime':
+                                metadata['exposure_time'] = str(value)
+                            elif tag == 'FNumber':
+                                metadata['f_number'] = float(value)
+                            elif tag == 'ISOSpeedRatings':
+                                metadata['iso_speed'] = value
+                            elif tag == 'FocalLength':
+                                metadata['focal_length'] = float(value)
+                            else:
+                                # Store other tags with proper formatting
+                                if isinstance(value, bytes):
+                                    try:
+                                        value = value.decode('utf-8')
+                                    except:
+                                        value = str(value)
+                                metadata[f'exif_{tag.lower()}'] = value
+        except Exception as e:
+            metadata['exif_error'] = str(e)
+
+        return metadata
+
+    def _convert_to_degrees(self, value):
+        """
+        Helper method to convert GPS coordinates from EXIF format to decimal degrees
+
+        Args:
+            value: EXIF GPS coordinate value (degrees, minutes, seconds)
+
+        Returns:
+            Decimal degrees
+        """
+        degrees = float(value[0])
+        minutes = float(value[1])
+        seconds = float(value[2])
+
+        return degrees + (minutes / 60.0) + (seconds / 3600.0)

@@ -481,7 +481,7 @@ class SearchEngine:
 
     def _parse_query(self, query):
         """
-        Parse search query for special operators
+        Parse search query string into components
 
         Args:
             query: Search query string
@@ -493,43 +493,122 @@ class SearchEngine:
             'terms': [],
             'exact_phrases': [],
             'file_types': [],
-            'tags': []
+            'date_range': None,
+            'size_range': None,
+            'tags': [],
+            'exclude_tags': []
         }
 
-        if not query:
+        if not query or not query.strip():
             return result
 
         # Extract exact phrases (quoted text)
-        exact_phrases = re.findall(r'"([^"]*)"', query)
+        exact_phrases = re.findall(r'"([^"]+)"', query)
         for phrase in exact_phrases:
-            if phrase:
-                result['exact_phrases'].append(phrase)
-                # Remove the phrase from the query
-                query = query.replace(f'"{phrase}"', '')
+            result['exact_phrases'].append(phrase)
+            # Remove the phrase from the query
+            query = query.replace(f'"{phrase}"', '', 1)
 
-        # Extract file type filters (ext:pdf)
-        file_type_matches = re.findall(r'ext:(\w+)', query)
+        # Extract file type filters
+        file_type_matches = re.findall(r'type:(\w+)', query)
         for file_type in file_type_matches:
-            if file_type:
-                result['file_types'].append(f'.{file_type.lower()}')
-                # Remove the file type filter from the query
-                query = query.replace(f'ext:{file_type}', '')
+            result['file_types'].append(file_type.lower())
+            # Remove the file type filter from the query
+            query = query.replace(f'type:{file_type}', '', 1)
 
-        # Extract tag filters (tag:important)
-        tag_matches = re.findall(r'tag:(\w+)', query)
+        # Extract date range filters
+        date_range_match = re.search(
+            r'date:(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})', query)
+        if date_range_match:
+            start_date = date_range_match.group(1)
+            end_date = date_range_match.group(2)
+            result['date_range'] = (start_date, end_date)
+            # Remove the date range filter from the query
+            query = query.replace(f'date:{start_date}..{end_date}', '', 1)
+        else:
+            # Check for single date filter
+            date_match = re.search(r'date:(\d{4}-\d{2}-\d{2})', query)
+            if date_match:
+                date = date_match.group(1)
+                result['date_range'] = (date, date)
+                # Remove the date filter from the query
+                query = query.replace(f'date:{date}', '', 1)
+
+        # Extract size range filters (in KB, MB, or GB)
+        size_pattern = r'size:(\d+(?:\.\d+)?(?:kb|mb|gb)?)\.\.(\d+(?:\.\d+)?(?:kb|mb|gb)?)'
+        size_range_match = re.search(size_pattern, query, re.IGNORECASE)
+        if size_range_match:
+            min_size = self._parse_size(size_range_match.group(1))
+            max_size = self._parse_size(size_range_match.group(2))
+            result['size_range'] = (min_size, max_size)
+            # Remove the size range filter from the query
+            query = query.replace(size_range_match.group(0), '', 1)
+        else:
+            # Check for single size filter
+            size_match = re.search(
+                r'size:([><]?)(\d+(?:\.\d+)?(?:kb|mb|gb)?)', query, re.IGNORECASE)
+            if size_match:
+                operator = size_match.group(1)
+                size = self._parse_size(size_match.group(2))
+
+                if operator == '>':
+                    result['size_range'] = (size, None)
+                elif operator == '<':
+                    result['size_range'] = (None, size)
+                else:
+                    # Exact size match with a small range
+                    result['size_range'] = (size * 0.95, size * 1.05)
+
+                # Remove the size filter from the query
+                query = query.replace(size_match.group(0), '', 1)
+
+        # Extract tag filters
+        tag_matches = re.findall(r'tag:([^\s]+)', query)
         for tag in tag_matches:
-            if tag:
-                result['tags'].append(tag.lower())
-                # Remove the tag filter from the query
-                query = query.replace(f'tag:{tag}', '')
+            if tag.startswith('-'):
+                result['exclude_tags'].append(tag[1:])
+            else:
+                result['tags'].append(tag)
+            # Remove the tag filter from the query
+            query = query.replace(f'tag:{tag}', '', 1)
 
-        # Split remaining terms
+        # Process remaining terms
         terms = query.split()
         for term in terms:
-            if term:
-                result['terms'].append(term)
+            if term.strip():
+                result['terms'].append(term.strip())
 
         return result
+
+    def _parse_size(self, size_str):
+        """
+        Parse size string to bytes
+
+        Args:
+            size_str: Size string (e.g., "10kb", "5.2mb", "1gb")
+
+        Returns:
+            Size in bytes
+        """
+        size_str = size_str.lower()
+
+        # Extract numeric value and unit
+        match = re.match(r'(\d+(?:\.\d+)?)([kmg]?b)?', size_str)
+        if not match:
+            return 0
+
+        value = float(match.group(1))
+        unit = match.group(2) or 'b'
+
+        # Convert to bytes
+        if unit == 'kb':
+            return value * 1024
+        elif unit == 'mb':
+            return value * 1024 * 1024
+        elif unit == 'gb':
+            return value * 1024 * 1024 * 1024
+        else:  # bytes
+            return value
 
     def _date_to_timestamp(self, date_str):
         """

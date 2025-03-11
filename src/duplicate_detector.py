@@ -169,54 +169,134 @@ class DuplicateDetector:
         Args:
             file1: Path to first file
             file2: Path to second file
-            max_size: Maximum number of bytes to compare
+            max_size: Maximum number of bytes to read for comparison
 
         Returns:
-            Similarity ratio (0.0 to 1.0)
+            Similarity score between 0.0 and 1.0
         """
         try:
-            # For very large files, only compare a sample
+            # Check if files exist
+            if not os.path.exists(file1) or not os.path.exists(file2):
+                return 0.0
+
+            # Get file sizes
             size1 = os.path.getsize(file1)
             size2 = os.path.getsize(file2)
 
-            # If files are very different in size, they're probably not similar
-            if max(size1, size2) > min(size1, size2) * 2:
-                return 0.0
+            # If file sizes are very different, they're probably not similar
+            size_ratio = min(size1, size2) / max(size1,
+                                                 size2) if max(size1, size2) > 0 else 0
+            if size_ratio < 0.5:  # If one file is less than half the size of the other
+                return size_ratio  # Return size ratio as similarity
 
-            # Read content (or sample for large files)
-            with open(file1, 'rb') as f1:
-                content1 = f1.read(min(size1, max_size))
+            # For very small files, read the entire content
+            if size1 < max_size and size2 < max_size:
+                with open(file1, 'rb') as f1, open(file2, 'rb') as f2:
+                    content1 = f1.read()
+                    content2 = f2.read()
 
-            with open(file2, 'rb') as f2:
-                content2 = f2.read(min(size2, max_size))
-
-            # For binary files, compare as bytes
-            if b'\0' in content1[:1024] or b'\0' in content2[:1024]:
-                # Simple byte-by-byte comparison for binary files
-                min_len = min(len(content1), len(content2))
-                if min_len == 0:
-                    return 0.0
-
-                matches = sum(1 for i in range(min_len)
-                              if content1[i] == content2[i])
-                return matches / min_len
-            else:
-                # For text files, use difflib
-                try:
-                    text1 = content1.decode('utf-8', errors='ignore')
-                    text2 = content2.decode('utf-8', errors='ignore')
-                    return difflib.SequenceMatcher(None, text1, text2).ratio()
-                except:
-                    # Fallback to byte comparison if decoding fails
-                    min_len = min(len(content1), len(content2))
-                    if min_len == 0:
-                        return 0.0
-
-                    matches = sum(1 for i in range(min_len)
+                # For binary files, compare byte sequences
+                if b'\0' in content1[:1024] or b'\0' in content2[:1024]:
+                    # Binary files - compare byte sequences
+                    # Use a simple byte-by-byte comparison for a sample
+                    sample_size = min(len(content1), len(content2), 10000)
+                    matches = sum(1 for i in range(sample_size)
                                   if content1[i] == content2[i])
-                    return matches / min_len
+                    return matches / sample_size
+                else:
+                    # Text files - use difflib for better comparison
+                    try:
+                        # Try to decode as text
+                        text1 = content1.decode('utf-8', errors='replace')
+                        text2 = content2.decode('utf-8', errors='replace')
+
+                        # Split into lines for better comparison
+                        lines1 = text1.splitlines()
+                        lines2 = text2.splitlines()
+
+                        # Use difflib's SequenceMatcher for intelligent comparison
+                        similarity = difflib.SequenceMatcher(
+                            None, lines1, lines2).ratio()
+                        return similarity
+                    except:
+                        # Fallback to byte comparison if text decoding fails
+                        sample_size = min(len(content1), len(content2), 10000)
+                        matches = sum(1 for i in range(sample_size)
+                                      if content1[i] == content2[i])
+                        return matches / sample_size
+            else:
+                # For larger files, sample the content
+                sample_size = min(max_size, size1, size2)
+
+                # Read samples from the beginning, middle, and end of each file
+                samples1 = []
+                samples2 = []
+
+                with open(file1, 'rb') as f1:
+                    # Beginning
+                    samples1.append(f1.read(sample_size // 3))
+                    # Middle
+                    if size1 > sample_size:
+                        f1.seek(size1 // 2 - (sample_size // 6))
+                        samples1.append(f1.read(sample_size // 3))
+                    # End
+                    if size1 > sample_size:
+                        f1.seek(max(0, size1 - (sample_size // 3)))
+                        samples1.append(f1.read(sample_size // 3))
+
+                with open(file2, 'rb') as f2:
+                    # Beginning
+                    samples2.append(f2.read(sample_size // 3))
+                    # Middle
+                    if size2 > sample_size:
+                        f2.seek(size2 // 2 - (sample_size // 6))
+                        samples2.append(f2.read(sample_size // 3))
+                    # End
+                    if size2 > sample_size:
+                        f2.seek(max(0, size2 - (sample_size // 3)))
+                        samples2.append(f2.read(sample_size // 3))
+
+                # Calculate similarity for each sample
+                similarities = []
+                for i in range(min(len(samples1), len(samples2))):
+                    s1 = samples1[i]
+                    s2 = samples2[i]
+
+                    # For binary samples, compare byte sequences
+                    if b'\0' in s1[:100] or b'\0' in s2[:100]:
+                        sample_size = min(len(s1), len(s2))
+                        if sample_size > 0:
+                            matches = sum(1 for i in range(
+                                sample_size) if s1[i] == s2[i])
+                            similarities.append(matches / sample_size)
+                    else:
+                        # Try to decode as text
+                        try:
+                            text1 = s1.decode('utf-8', errors='replace')
+                            text2 = s2.decode('utf-8', errors='replace')
+
+                            # Split into lines for better comparison
+                            lines1 = text1.splitlines()
+                            lines2 = text2.splitlines()
+
+                            # Use difflib's SequenceMatcher for intelligent comparison
+                            similarity = difflib.SequenceMatcher(
+                                None, lines1, lines2).ratio()
+                            similarities.append(similarity)
+                        except:
+                            # Fallback to byte comparison if text decoding fails
+                            sample_size = min(len(s1), len(s2))
+                            if sample_size > 0:
+                                matches = sum(1 for i in range(
+                                    sample_size) if s1[i] == s2[i])
+                                similarities.append(matches / sample_size)
+
+                # Return average similarity
+                return sum(similarities) / len(similarities) if similarities else 0.0
+
         except Exception as e:
-            logger.error(f"Error comparing {file1} and {file2}: {str(e)}")
+            logger.error(
+                f"Error calculating similarity between {file1} and {file2}: {str(e)}")
             return 0.0
 
     def handle_duplicates(self, duplicate_groups, action="report", target_dir=None, keep_strategy="newest"):

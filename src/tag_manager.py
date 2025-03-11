@@ -582,25 +582,46 @@ class TagManager:
         Returns:
             List of tag dictionaries with confidence scores
         """
-        # This is a placeholder for AI-based tag suggestion
-        # In a real implementation, this would use AI to analyze file content and metadata
-
         suggestions = []
+
+        # Get all existing tags for reference
+        all_tags = self.get_all_tags()
+        tag_names = [tag['name'].lower() for tag in all_tags]
+
+        # Extract potential tags from summary if available
+        if 'summary' in file_info and file_info['summary']:
+            summary = file_info['summary'].lower()
+
+            # Check if any existing tag appears in the summary
+            for tag in all_tags:
+                tag_name = tag['name'].lower()
+                if tag_name in summary:
+                    # Calculate a confidence score based on frequency and prominence
+                    count = summary.count(tag_name)
+                    # Higher confidence for summary matches (max 0.95)
+                    confidence = min(0.7 + (count * 0.05), 0.95)
+
+                    suggestions.append({
+                        'id': tag['id'],
+                        'name': tag['name'],
+                        'confidence': confidence,
+                        'reason': f"Keyword appears {count} times in document summary"
+                    })
 
         # Extract potential tags from content
         if 'content' in file_info and file_info['content']:
-            # Simple keyword extraction (placeholder)
             content = file_info['content'].lower()
-
-            # Get all existing tags
-            all_tags = self.get_all_tags()
-            tag_names = [tag['name'].lower() for tag in all_tags]
 
             # Check if any existing tag appears in the content
             for tag in all_tags:
                 tag_name = tag['name'].lower()
+
+                # Skip tags already found in summary
+                if any(s['name'].lower() == tag_name for s in suggestions):
+                    continue
+
                 if tag_name in content:
-                    # Calculate a simple confidence score based on frequency
+                    # Calculate a confidence score based on frequency
                     count = content.count(tag_name)
                     # Max 0.9 for keyword matches
                     confidence = min(0.5 + (count * 0.1), 0.9)
@@ -612,42 +633,72 @@ class TagManager:
                         'reason': f"Keyword appears {count} times in content"
                     })
 
+            # Extract potential new tags from AI analysis
+            if 'keywords' in file_info and file_info['keywords']:
+                for keyword in file_info['keywords']:
+                    keyword = keyword.lower()
+
+                    # Skip if already in suggestions
+                    if any(s['name'].lower() == keyword for s in suggestions):
+                        continue
+
+                    # Skip very short keywords
+                    if len(keyword) < 3:
+                        continue
+
+                    # Check if this is a new tag
+                    if keyword not in tag_names:
+                        suggestions.append({
+                            'name': keyword.title(),  # Capitalize for tag name
+                            'confidence': 0.85,
+                            'reason': "Extracted from AI keyword analysis"
+                        })
+
+            # Extract potential tags from categories
+            if 'category' in file_info and file_info['category']:
+                category = file_info['category'].lower()
+
+                # Skip if already in suggestions
+                if not any(s['name'].lower() == category for s in suggestions):
+                    # Check if this is a new tag
+                    if category not in tag_names:
+                        suggestions.append({
+                            'name': category.title(),  # Capitalize for tag name
+                            'confidence': 0.9,
+                            'reason': "Based on document category"
+                        })
+
         # Extract potential tags from metadata
         if 'metadata' in file_info and file_info['metadata']:
             for key, value in file_info['metadata'].items():
                 if value and isinstance(value, str):
-                    # Check if any metadata value could be a tag
                     value = value.lower()
-                    if len(value) > 2 and len(value) < 20:  # Reasonable tag length
+
+                    # Skip very short or very long values
+                    if len(value) < 3 or len(value) > 30:
+                        continue
+
+                    # Skip if already in suggestions
+                    if any(s['name'].lower() == value for s in suggestions):
+                        continue
+
+                    # Check if this is a new tag
+                    if value not in tag_names:
+                        # Higher confidence for author, title, subject
+                        confidence = 0.8 if key.lower() in [
+                            'author', 'title', 'subject'] else 0.7
+
                         suggestions.append({
                             'name': value.title(),  # Capitalize for tag name
-                            'confidence': 0.7,
+                            'confidence': confidence,
                             'reason': f"Extracted from metadata field '{key}'"
                         })
 
-        # Extract potential tags from filename
-        if 'path' in file_info:
-            filename = os.path.basename(file_info['path'])
-            name, _ = os.path.splitext(filename)
+        # Sort suggestions by confidence (highest first)
+        suggestions.sort(key=lambda x: x['confidence'], reverse=True)
 
-            # Split filename by common separators
-            parts = re.split(r'[-_\s]', name)
-            for part in parts:
-                if len(part) > 2 and len(part) < 20:  # Reasonable tag length
-                    suggestions.append({
-                        'name': part.title(),  # Capitalize for tag name
-                        'confidence': 0.6,
-                        'reason': "Extracted from filename"
-                    })
-
-        # Remove duplicates and sort by confidence
-        unique_suggestions = {}
-        for suggestion in suggestions:
-            name = suggestion['name'].lower()
-            if name not in unique_suggestions or suggestion['confidence'] > unique_suggestions[name]['confidence']:
-                unique_suggestions[name] = suggestion
-
-        return sorted(unique_suggestions.values(), key=lambda x: x['confidence'], reverse=True)
+        # Limit to top 10 suggestions
+        return suggestions[:10]
 
     def import_tags(self, json_file):
         """

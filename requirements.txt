@@ -95,3 +95,4 @@ python-docx
 PyPDF2
 PyPDF2
 pypdf
+reportlab

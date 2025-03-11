@@ -1,0 +1,30 @@
+{
+  "filename": "sample.pdf",
+  "filepath": "test_files/sample.pdf",
+  "file_size": 1577,
+  "created_time": "2025-03-11T16:56:55.752542",
+  "modified_time": "2025-03-11T16:56:55.752542",
+  "file_type": "pdf",
+  "settings": {
+    "extract_images": true,
+    "ocr_enabled": true,
+    "ocr_language": "eng"
+  },
+  "pages": 1,
+  "title": "untitled",
+  "author": "anonymous",
+  "subject": "unspecified",
+  "creator": "ReportLab PDF Library - www.reportlab.com",
+  "producer": "ReportLab PDF Library - www.reportlab.com",
+  "ocr_used": true,
+  "ocr_language": "eng",
+  "images": [
+    {
+      "page": 1,
+      "would_save_to": "test_files/sample_images/page_1_img_1.png",
+      "placeholder": true
+    }
+  ],
+  "word_count": 34,
+  "char_count": 201
+}

@@ -98,21 +98,58 @@ def main():
             status = "Available" if pdf_lib_available else "Missing"
             logger.info(f"  - PDF Library: {status}")
             
+            # Configure plugin settings
+            logger.info("Configuring PDF parser settings...")
+            
+            # Enable OCR and image extraction for testing
+            settings_manager.set_setting("pdf_parser.ocr_enabled", True)
+            settings_manager.set_setting("pdf_parser.ocr_language", "eng")
+            settings_manager.set_setting("pdf_parser.extract_images", True)
+            
+            logger.info("PDF Parser settings:")
+            logger.info(f"  - OCR Enabled: {settings_manager.get_setting('pdf_parser.ocr_enabled')}")
+            logger.info(f"  - OCR Language: {settings_manager.get_setting('pdf_parser.ocr_language')}")
+            logger.info(f"  - Extract Images: {settings_manager.get_setting('pdf_parser.extract_images')}")
+            
             # Parse the PDF file
             logger.info("Parsing PDF file...")
             result = pdf_parser.parse_file(args.pdf)
             
-            if 'error' in result:
+            # Debug the result
+            logger.info(f"PDF parser result type: {type(result)}")
+            
+            # Check if result is valid
+            if not result:
+                logger.error("Error parsing PDF: No result returned")
+            elif isinstance(result, dict) and 'error' in result and result['error']:
                 logger.error(f"Error parsing PDF: {result['error']}")
             else:
+                # Any other valid result - treat as success
                 logger.info("PDF parsed successfully")
                 logger.info("Metadata:")
                 for key, value in result.get('metadata', {}).items():
-                    logger.info(f"  - {key}: {value}")
+                    if isinstance(value, dict):
+                        logger.info(f"  - {key}:")
+                        for subkey, subvalue in value.items():
+                            logger.info(f"    - {subkey}: {subvalue}")
+                    elif isinstance(value, list) and key == 'images':
+                        logger.info(f"  - {key}: (list with {len(value)} items)")
+                        for i, img_info in enumerate(value[:2]):  # Show first 2 images only
+                            logger.info(f"    Item {i+1}:")
+                            for img_key, img_val in img_info.items():
+                                logger.info(f"      {img_key}: {img_val}")
+                    else:
+                        logger.info(f"  - {key}: {value}")
                 
                 content = result.get('content', '')
                 content_preview = content[:100] + '...' if len(content) > 100 else content
                 logger.info(f"Content preview: {content_preview}")
+                
+                # Images already reported above in metadata section
+                
+                # Check if OCR was used
+                if result.get('metadata', {}).get('ocr_used', False):
+                    logger.info(f"OCR was used with language: {result['metadata'].get('ocr_language', 'unknown')}")
                 
                 # If text was extracted and AI analyzer is available, analyze it
                 if content and args.test_all:

@@ -1,0 +1,1 @@
+Sample PDF Document This is a test document for the AI Document Organizer. It contains some text that should be extracted by the PDF parser. The parser should analyze this content and extract metadata.

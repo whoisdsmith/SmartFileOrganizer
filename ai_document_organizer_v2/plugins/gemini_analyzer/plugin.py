@@ -31,9 +31,9 @@ class GeminiAnalyzerPlugin(BasePlugin):
     version = "1.0.0"
     description = "Analyzes documents using Google's Gemini AI models"
     
-    def __init__(self, plugin_id="gemini_analyzer"):
+    def __init__(self, plugin_id="gemini_analyzer", name=None, version=None, description=None):
         """Initialize the plugin."""
-        super().__init__(plugin_id)
+        super().__init__(plugin_id, name, version, description)
         # Additional configuration
         self._config_schema = {
             "api_key": {

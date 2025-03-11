@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refactored GeminiAnalyzerPlugin to use BasePlugin settings methods
 - Standardized settings access across plugin system
 - Improved code maintainability with consistent settings management approach
+- Enhanced PDFParserPlugin with configurable OCR and image extraction capabilities
+- Implemented settings-driven PDF processing with declarative configuration schema
 
 ## [2.0.0] - 2025-03-11
 

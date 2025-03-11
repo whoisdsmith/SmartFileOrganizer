@@ -112,3 +112,10 @@ librosa
 librosa
 matplotlib
 numpy
+ffmpeg-python
+librosa
+matplotlib
+mutagen
+numpy
+pydub
+scipy

@@ -139,3 +139,7 @@ src/cache/embeddings/
 # Duplicate detection cache
 src/cache/duplicates/
 *.dup.json
+
+# Format conversion cache
+src/cache/conversions/
+*.conv.tmp

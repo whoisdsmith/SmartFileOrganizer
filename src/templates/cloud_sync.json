@@ -1,0 +1,177 @@
+{
+    "name": "Cloud Storage Sync Template",
+    "description": "Template for cloud storage synchronization settings",
+    "author": "SmartFileOrganizer",
+    "version": "1.0.0",
+    "rules": [
+        {
+            "name": "sync_documents",
+            "type": "sync",
+            "conditions": [
+                {
+                    "type": "extension",
+                    "extensions": [".pdf", ".doc", ".docx", ".txt", ".md"]
+                }
+            ],
+            "actions": [
+                {
+                    "type": "sync",
+                    "provider": "google_drive",
+                    "destination": "Documents/",
+                    "sync_direction": "bidirectional",
+                    "conflict_resolution": "newest_wins"
+                }
+            ]
+        },
+        {
+            "name": "sync_images",
+            "type": "sync",
+            "conditions": [
+                {
+                    "type": "extension",
+                    "extensions": [".jpg", ".jpeg", ".png", ".gif", ".bmp"]
+                }
+            ],
+            "actions": [
+                {
+                    "type": "sync",
+                    "provider": "google_drive",
+                    "destination": "Images/",
+                    "sync_direction": "bidirectional",
+                    "conflict_resolution": "newest_wins"
+                }
+            ]
+        },
+        {
+            "name": "sync_audio",
+            "type": "sync",
+            "conditions": [
+                {
+                    "type": "extension",
+                    "extensions": [".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a"]
+                }
+            ],
+            "actions": [
+                {
+                    "type": "sync",
+                    "provider": "google_drive",
+                    "destination": "Audio/",
+                    "sync_direction": "upload_only",
+                    "conflict_resolution": "keep_both"
+                }
+            ]
+        },
+        {
+            "name": "sync_video",
+            "type": "sync",
+            "conditions": [
+                {
+                    "type": "extension",
+                    "extensions": [".mp4", ".avi", ".mkv", ".mov", ".wmv", ".webm", ".flv"]
+                }
+            ],
+            "actions": [
+                {
+                    "type": "sync",
+                    "provider": "google_drive",
+                    "destination": "Video/",
+                    "sync_direction": "upload_only",
+                    "conflict_resolution": "keep_both"
+                }
+            ]
+        },
+        {
+            "name": "backup_important",
+            "type": "sync",
+            "conditions": [
+                {
+                    "type": "tag",
+                    "tags": ["important", "backup"]
+                }
+            ],
+            "actions": [
+                {
+                    "type": "sync",
+                    "provider": "google_drive",
+                    "destination": "Backups/Important/",
+                    "sync_direction": "upload_only",
+                    "conflict_resolution": "keep_all_versions"
+                },
+                {
+                    "type": "sync",
+                    "provider": "onedrive",
+                    "destination": "Backups/Important/",
+                    "sync_direction": "upload_only",
+                    "conflict_resolution": "keep_all_versions"
+                }
+            ]
+        }
+    ],
+    "cloud_config": {
+        "providers": {
+            "google_drive": {
+                "enabled": true,
+                "auth_type": "oauth2",
+                "scopes": [
+                    "https://www.googleapis.com/auth/drive.file",
+                    "https://www.googleapis.com/auth/drive.metadata.readonly"
+                ],
+                "sync_interval": 300,
+                "max_retries": 3,
+                "retry_delay": 5
+            },
+            "onedrive": {
+                "enabled": true,
+                "auth_type": "oauth2",
+                "scopes": [
+                    "Files.ReadWrite",
+                    "Files.ReadWrite.All"
+                ],
+                "sync_interval": 300,
+                "max_retries": 3,
+                "retry_delay": 5
+            },
+            "dropbox": {
+                "enabled": false,
+                "auth_type": "oauth2",
+                "scopes": [
+                    "files.content.read",
+                    "files.content.write"
+                ],
+                "sync_interval": 300,
+                "max_retries": 3,
+                "retry_delay": 5
+            }
+        },
+        "sync_settings": {
+            "default_sync_direction": "bidirectional",
+            "default_conflict_resolution": "newest_wins",
+            "sync_hidden_files": false,
+            "sync_system_files": false,
+            "max_file_size": 1073741824,
+            "excluded_extensions": [
+                ".tmp",
+                ".temp",
+                ".bak",
+                ".swp"
+            ],
+            "bandwidth_limit": {
+                "upload_kbps": 1024,
+                "download_kbps": 1024
+            }
+        },
+        "backup_settings": {
+            "enable_versioning": true,
+            "max_versions": 5,
+            "version_retention_days": 30,
+            "compression": true,
+            "encryption": true
+        },
+        "notification_settings": {
+            "notify_on_sync_start": false,
+            "notify_on_sync_complete": true,
+            "notify_on_error": true,
+            "notify_on_conflict": true
+        }
+    }
+}

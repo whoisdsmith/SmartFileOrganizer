@@ -8,6 +8,7 @@ import queue
 import time
 import logging
 from PIL import Image, ImageTk
+import traceback
 
 # Local imports
 from .file_analyzer import FileAnalyzer
@@ -973,38 +974,21 @@ class DocumentOrganizerApp:
             self.queue.put(("complete", None))
 
     def consume_queue(self):
-        """Process messages from the queue"""
+        """Consume messages from the queue"""
         try:
-            while True:
+            while not self.queue.empty():
                 message_type, message = self.queue.get_nowait()
 
-                if message_type == "status":
-                    self.status_label.config(text=message)
+                if message_type == "progress":
+                    current, total, status_message = message
+                    if total > 0:
+                        self.progress_var.set(current / total * 100)
+                    else:
+                        self.progress_var.set(0)
+                    self.status_var.set(status_message)
+                    self.status_label.update()
 
-                elif message_type == "progress":
-                    processed = message.get("processed", 0)
-                    total = message.get("total", 0)
-                    percentage = message.get("percentage", 0)
-                    status = message.get("status", "")
-
-                    # Update progress bar
-                    self.progress_var.set(percentage)
-
-                    # Update labels
-                    self.processed_label.config(text=f"Files: {processed}")
-                    self.total_label.config(text=f"Total: {total}")
-                    self.progress_details.config(
-                        text=f"{status} ({percentage}% complete)")
-
-                    # Calculate current batch
-                    batch_size = int(self.batch_size_var.get())
-                    current_batch = (processed // batch_size) + 1
-                    total_batches = (total + batch_size - 1) // batch_size
-                    self.batch_status_label.config(
-                        text=f"Batch: {current_batch}/{total_batches}")
-
-                elif message_type == "files":
-                    self.analyzed_files = message
+                elif message_type == "update_files":
                     self.update_file_list(message)
 
                 elif message_type == "error":
@@ -1020,6 +1004,33 @@ class DocumentOrganizerApp:
                     messagebox.showinfo("Cancelled", "Operation was cancelled")
                     self.cancel_button.config(state=tk.NORMAL)
 
+                elif message_type == "paused":
+                    messagebox.showinfo("Paused", "Operation was paused")
+
+                elif message_type == "status":
+                    self.status_var.set(message)
+                    self.status_label.update()
+
+                elif message_type == "update_time":
+                    elapsed_str, remaining_str = message
+                    self.elapsed_time_var.set(elapsed_str)
+                    self.remaining_time_var.set(remaining_str)
+
+                elif message_type == "update_job_list":
+                    self.update_job_list()
+
+                elif message_type == "reset_ui":
+                    # Reset batch processing UI
+                    self.start_batch_button.configure(state="normal")
+                    self.pause_batch_button.configure(state="disabled")
+                    self.resume_batch_button.configure(state="disabled")
+                    self.cancel_batch_button.configure(state="disabled")
+
+                elif message_type == "refresh_images":
+                    # Refresh image display if we're on the images tab
+                    if hasattr(self, "current_images") and self.current_images:
+                        self.display_images(self.current_images)
+
                 elif message_type == "complete":
                     if self.running:
                         self.running = False
@@ -1028,126 +1039,13 @@ class DocumentOrganizerApp:
                             self.status_label.config(
                                 text="Operation cancelled")
                         else:
-                            self.status_label.config(
-                                text=f"Completed scanning {len(self.analyzed_files)} files")
-                    else:
-                        # For report generation and other tasks
-                        self.progress_bar.stop()
-                        self.status_label.config(text="Ready")
+                            self.status_label.config(text="Ready")
+        except Exception as e:
+            self.logger.error(f"Error in queue consumer: {str(e)}")
+            self.logger.error(traceback.format_exc())
 
-                    self.cancel_requested = False
-
-                # New message types for Stage 1 features
-                elif message_type == "duplicates":
-                    # Store duplicate groups
-                    self.duplicate_groups = message
-
-                    # Clear existing items
-                    for item in self.dup_tree.get_children():
-                        self.dup_tree.delete(item)
-
-                    # Add duplicate groups to the tree
-                    total_duplicates = 0
-                    total_size = 0
-
-                    for group_id, files in message.items():
-                        if len(files) > 1:  # Only show groups with actual duplicates
-                            file_count = len(files)
-                            # Count duplicates (not the original)
-                            total_duplicates += file_count - 1
-
-                            # Calculate size (all files in group have same size)
-                            try:
-                                size = os.path.getsize(files[0])
-                                # Size of duplicates
-                                total_size += size * (file_count - 1)
-                            except:
-                                size = 0
-
-                            # Add to tree
-                            self.dup_tree.insert(
-                                "",
-                                tk.END,
-                                values=(
-                                    group_id,
-                                    f"{file_count} files",
-                                    get_readable_size(size)
-                                )
-                            )
-
-                    # Update status
-                    self.status_label.config(
-                        text=f"Found {total_duplicates} duplicate files ({get_readable_size(total_size)})"
-                    )
-
-                    # Enable handle duplicates button if we found duplicates
-                    if total_duplicates > 0:
-                        self.handle_dup_button.config(state=tk.NORMAL)
-                    else:
-                        messagebox.showinfo("Info", "No duplicate files found")
-
-                elif message_type == "duplicate_results":
-                    # Show results of duplicate handling
-                    total_handled = len(message.get("actions", []))
-                    space_saved = message.get("space_savings", 0)
-
-                    messagebox.showinfo(
-                        "Duplicate Handling Complete",
-                        f"Handled {total_handled} duplicate files\n"
-                        f"Space saved: {get_readable_size(space_saved)}"
-                    )
-
-                    # Refresh duplicate list
-                    self.scan_for_duplicates()
-
-                elif message_type == "search_results":
-                    # Store search results
-                    self.search_results = message
-
-                    # Clear existing items
-                    for item in self.search_tree.get_children():
-                        self.search_tree.delete(item)
-
-                    # Add search results to the tree
-                    for result in message.get("results", []):
-                        self.search_tree.insert(
-                            "",
-                            tk.END,
-                            values=(
-                                result.get("id", ""),
-                                result.get("filename", ""),
-                                result.get("category", ""),
-                                result.get("extension", ""),
-                                result.get("size_formatted", "")
-                            )
-                        )
-
-                    # Update status
-                    total_results = message.get("total", 0)
-                    self.status_label.config(
-                        text=f"Found {total_results} results for '{message.get('query', '')}'"
-                    )
-
-                    if total_results == 0:
-                        messagebox.showinfo("Info", "No results found")
-
-                elif message_type == "index_results":
-                    # Show results of indexing
-                    indexed = message.get("indexed", 0)
-                    updated = message.get("updated", 0)
-                    errors = message.get("errors", 0)
-
-                    messagebox.showinfo(
-                        "Indexing Complete",
-                        f"Indexed {indexed} new files\n"
-                        f"Updated {updated} existing files\n"
-                        f"Errors: {errors}"
-                    )
-
-                self.queue.task_done()
-
-        except queue.Empty:
-            # Schedule to check again
+        # Schedule next queue check
+        if self.root:
             self.root.after(100, self.consume_queue)
 
     def update_file_list(self, files):
@@ -4132,3 +4030,502 @@ class DocumentOrganizerApp:
             self.queue.put(("error", str(e)))
         finally:
             self.queue.put(("complete", None))
+
+    # Batch processing methods
+    def browse_batch_source(self):
+        """Browse for batch source directory"""
+        directory = filedialog.askdirectory(title="Select Source Directory")
+        if directory:
+            self.batch_source_var.set(directory)
+            self.source_dir.set(directory)  # Update main source dir too
+
+    def browse_batch_target(self):
+        """Browse for batch target directory"""
+        directory = filedialog.askdirectory(title="Select Target Directory")
+        if directory:
+            self.batch_target_var.set(directory)
+            self.target_dir.set(directory)  # Update main target dir too
+
+    def start_batch(self):
+        """Start a batch processing job"""
+        # Get source and target directories
+        source_dir = self.batch_source_var.get()
+        target_dir = self.batch_target_var.get()
+
+        if not source_dir:
+            messagebox.showinfo("Batch Processing",
+                                "Please select a source directory")
+            return
+
+        if not target_dir:
+            messagebox.showinfo("Batch Processing",
+                                "Please select a target directory")
+            return
+
+        # Get batch settings
+        try:
+            batch_size = int(self.batch_size_var.get())
+            if batch_size < 1:
+                messagebox.showinfo("Batch Processing",
+                                    "Batch size must be at least 1")
+                return
+        except ValueError:
+            messagebox.showinfo("Batch Processing",
+                                "Batch size must be a number")
+            return
+
+        try:
+            batch_delay = float(self.batch_delay_var.get())
+            if batch_delay < 0:
+                messagebox.showinfo("Batch Processing",
+                                    "Batch delay must be non-negative")
+                return
+        except ValueError:
+            messagebox.showinfo("Batch Processing",
+                                "Batch delay must be a number")
+            return
+
+        try:
+            max_workers = int(self.max_workers_var.get())
+            if max_workers < 1:
+                messagebox.showinfo("Batch Processing",
+                                    "Max workers must be at least 1")
+                return
+        except ValueError:
+            messagebox.showinfo("Batch Processing",
+                                "Max workers must be a number")
+            return
+
+        try:
+            memory_limit = int(self.memory_limit_var.get())
+            if memory_limit < 10 or memory_limit > 100:
+                messagebox.showinfo("Batch Processing",
+                                    "Memory limit must be between 10 and 100")
+                return
+        except ValueError:
+            messagebox.showinfo("Batch Processing",
+                                "Memory limit must be a number")
+            return
+
+        # Configure file analyzer
+        self.file_analyzer.batch_size = batch_size
+        self.file_analyzer.batch_delay = batch_delay
+        self.file_analyzer.max_workers = max_workers
+
+        # Update settings
+        self.settings_manager.set_setting("batch_size", batch_size)
+        self.settings_manager.set_setting("batch_delay", batch_delay)
+        self.settings_manager.set_setting(
+            "batch_processing.max_workers", max_workers)
+        self.settings_manager.set_setting(
+            "batch_processing.memory_limit_percent", memory_limit)
+        self.settings_manager.set_setting(
+            "batch_processing.use_process_pool", self.use_process_pool_var.get())
+        self.settings_manager.set_setting(
+            "batch_processing.adaptive_workers", self.adaptive_workers_var.get())
+        self.settings_manager.set_setting(
+            "batch_processing.enable_pause_resume", self.enable_pause_resume_var.get())
+        self.settings_manager.set_setting(
+            "batch_processing.save_job_state", self.save_job_state_var.get())
+
+        # Start batch processing in a thread
+        self.running = True
+        self.cancel_requested = False
+        self.is_paused = False
+
+        # Update UI
+        self.start_batch_button.configure(state="disabled")
+        self.pause_batch_button.configure(state="normal")
+        self.resume_batch_button.configure(state="disabled")
+        self.cancel_batch_button.configure(state="normal")
+
+        # Reset progress
+        self.progress_var.set(0)
+        self.batch_status_var.set("Starting batch processing...")
+        self.cpu_usage_var.set("0%")
+        self.memory_usage_var.set("0%")
+        self.elapsed_time_var.set("00:00:00")
+        self.remaining_time_var.set("00:00:00")
+
+        # Start batch processing thread
+        threading.Thread(target=self.batch_processing_thread,
+                         args=(source_dir, target_dir),
+                         daemon=True).start()
+
+        # Start resource monitoring
+        self.start_resource_monitoring()
+
+    def pause_batch(self):
+        """Pause the current batch processing job"""
+        if self.running and not self.is_paused:
+            self.is_paused = True
+            self.file_analyzer.pause_operation()
+            self.batch_status_var.set("Paused")
+
+            # Update UI
+            self.pause_batch_button.configure(state="disabled")
+            self.resume_batch_button.configure(state="normal")
+
+    def resume_batch(self):
+        """Resume the paused batch processing job"""
+        if self.running and self.is_paused:
+            self.is_paused = False
+            self.file_analyzer.resume_operation()
+            self.batch_status_var.set("Resuming...")
+
+            # Update UI
+            self.pause_batch_button.configure(state="normal")
+            self.resume_batch_button.configure(state="disabled")
+
+    def cancel_batch(self):
+        """Cancel the current batch processing job"""
+        if self.running:
+            self.cancel_requested = True
+            self.file_analyzer.cancel_operation()
+            self.batch_status_var.set("Cancelling...")
+
+            # Update UI
+            self.pause_batch_button.configure(state="disabled")
+            self.resume_batch_button.configure(state="disabled")
+            self.cancel_batch_button.configure(state="disabled")
+
+    def resume_selected_job(self):
+        """Resume a selected job from the job history"""
+        selected_items = self.job_list.selection()
+        if not selected_items:
+            messagebox.showinfo("Resume Job", "Please select a job to resume")
+            return
+
+        job_id = selected_items[0]
+        job_state = self.file_analyzer.get_job_state(job_id)
+
+        if not job_state:
+            messagebox.showinfo("Resume Job", "Job state not found")
+            return
+
+        if job_state["completed"]:
+            messagebox.showinfo("Resume Job", "Job is already completed")
+            return
+
+        # Get source and target directories
+        source_dir = job_state["directory"]
+        target_dir = self.batch_target_var.get()
+
+        if not target_dir:
+            messagebox.showinfo(
+                "Resume Job", "Please select a target directory")
+            return
+
+        # Start batch processing in a thread
+        self.running = True
+        self.cancel_requested = False
+        self.is_paused = False
+
+        # Update UI
+        self.start_batch_button.configure(state="disabled")
+        self.pause_batch_button.configure(state="normal")
+        self.resume_batch_button.configure(state="disabled")
+        self.cancel_batch_button.configure(state="normal")
+
+        # Reset progress
+        self.progress_var.set(0)
+        self.batch_status_var.set(f"Resuming job {job_id}...")
+
+        # Start batch processing thread
+        threading.Thread(target=self.batch_processing_thread,
+                         args=(source_dir, target_dir, job_id),
+                         daemon=True).start()
+
+        # Start resource monitoring
+        self.start_resource_monitoring()
+
+    def view_job_details(self):
+        """View details of a selected job"""
+        selected_items = self.job_list.selection()
+        if not selected_items:
+            messagebox.showinfo("Job Details", "Please select a job to view")
+            return
+
+        job_id = selected_items[0]
+        job_state = self.file_analyzer.get_job_state(job_id)
+
+        if not job_state:
+            messagebox.showinfo("Job Details", "Job state not found")
+            return
+
+        # Create a details dialog
+        details_dialog = tk.Toplevel(self.root)
+        details_dialog.title(f"Job Details - {job_id}")
+        details_dialog.geometry("600x400")
+        details_dialog.transient(self.root)
+        details_dialog.grab_set()
+
+        # Job details
+        ttk.Label(details_dialog, text=f"Job ID: {job_id}").pack(
+            anchor="w", padx=10, pady=5)
+        ttk.Label(details_dialog, text=f"Directory: {job_state['directory']}").pack(
+            anchor="w", padx=10, pady=5)
+        ttk.Label(details_dialog, text=f"Total Files: {job_state['total_files']}").pack(
+            anchor="w", padx=10, pady=5)
+        ttk.Label(details_dialog, text=f"Processed Files: {len(job_state['processed_files'])}").pack(
+            anchor="w", padx=10, pady=5)
+        ttk.Label(details_dialog, text=f"Pending Files: {len(job_state['pending_files'])}").pack(
+            anchor="w", padx=10, pady=5)
+        ttk.Label(details_dialog, text=f"Status: {'Completed' if job_state['completed'] else 'Pending'}").pack(
+            anchor="w", padx=10, pady=5)
+
+        # Elapsed time
+        elapsed_time = job_state['elapsed_time']
+        hours = int(elapsed_time // 3600)
+        minutes = int((elapsed_time % 3600) // 60)
+        seconds = int(elapsed_time % 60)
+        ttk.Label(details_dialog, text=f"Elapsed Time: {hours:02d}:{minutes:02d}:{seconds:02d}").pack(
+            anchor="w", padx=10, pady=5)
+
+        # File list
+        ttk.Label(details_dialog, text="Processed Files:").pack(
+            anchor="w", padx=10, pady=5)
+
+        # Create a frame with scrollbar for the file list
+        file_frame = ttk.Frame(details_dialog)
+        file_frame.pack(fill="both", expand=True, padx=10, pady=5)
+
+        file_list = tk.Listbox(file_frame)
+        file_list.pack(side="left", fill="both", expand=True)
+
+        file_scrollbar = ttk.Scrollbar(
+            file_frame, orient="vertical", command=file_list.yview)
+        file_scrollbar.pack(side="right", fill="y")
+        file_list.configure(yscrollcommand=file_scrollbar.set)
+
+        # Add processed files to the list
+        # Limit to first 100 files
+        for file_info in job_state['processed_files'][:100]:
+            file_list.insert("end", file_info.get('file_name', 'Unknown'))
+
+        if len(job_state['processed_files']) > 100:
+            file_list.insert(
+                "end", f"... and {len(job_state['processed_files']) - 100} more files")
+
+        # Close button
+        ttk.Button(details_dialog, text="Close",
+                   command=details_dialog.destroy).pack(pady=10)
+
+    def clear_completed_jobs(self):
+        """Clear completed jobs from the job history"""
+        # Get all jobs
+        job_ids = []
+        for item in self.job_list.get_children():
+            job_state = self.file_analyzer.get_job_state(item)
+            if job_state and job_state["completed"]:
+                job_ids.append(item)
+
+        if not job_ids:
+            messagebox.showinfo("Clear Jobs", "No completed jobs to clear")
+            return
+
+        # Confirm
+        if not messagebox.askyesno("Clear Jobs", f"Clear {len(job_ids)} completed jobs?"):
+            return
+
+        # Clear jobs
+        for job_id in job_ids:
+            self.job_list.delete(job_id)
+            if job_id in self.file_analyzer.job_state:
+                del self.file_analyzer.job_state[job_id]
+
+        messagebox.showinfo(
+            "Clear Jobs", f"Cleared {len(job_ids)} completed jobs")
+
+    def update_job_list(self):
+        """Update the job history list"""
+        # Clear existing items
+        for item in self.job_list.get_children():
+            self.job_list.delete(item)
+
+        # Add jobs from file analyzer
+        for job_id, job_state in self.file_analyzer.job_state.items():
+            # Format start time
+            start_time = time.strftime(
+                "%Y-%m-%d %H:%M:%S", time.localtime(job_state["start_time"]))
+
+            # Determine status
+            if job_state["completed"]:
+                status = "Completed"
+            elif self.is_paused and self.current_job_id == job_id:
+                status = "Paused"
+            elif self.running and self.current_job_id == job_id:
+                status = "Running"
+            else:
+                status = "Pending"
+
+            # Calculate progress
+            total_files = job_state["total_files"]
+            processed_files = len(job_state["processed_files"])
+            if total_files > 0:
+                progress = f"{processed_files}/{total_files} ({processed_files/total_files*100:.1f}%)"
+            else:
+                progress = "0/0 (0%)"
+
+            # Add to list
+            self.job_list.insert("", "end", iid=job_id,
+                                 values=(start_time, status, f"{total_files} files", progress))
+
+    def batch_processing_thread(self, source_dir, target_dir, job_id=None):
+        """Thread for batch processing"""
+        try:
+            # Start time
+            start_time = time.time()
+            last_update_time = start_time
+
+            # Define progress callback
+            def progress_callback(current, total, status_message):
+                nonlocal last_update_time
+                current_time = time.time()
+
+                # Update progress at most once per second to avoid GUI freezing
+                if current_time - last_update_time >= 1.0:
+                    self.queue.put(
+                        ("progress", (current, total, status_message)))
+                    last_update_time = current_time
+
+                    # Update job progress
+                    if self.file_analyzer.current_job_id:
+                        job_progress = self.file_analyzer.get_job_progress(
+                            self.file_analyzer.current_job_id)
+                        if job_progress:
+                            # Update time estimates
+                            elapsed = job_progress["elapsed_time"]
+                            remaining = job_progress["estimated_time_remaining"]
+
+                            # Format times
+                            elapsed_str = self.format_time(elapsed)
+                            remaining_str = self.format_time(remaining)
+
+                            # Update UI
+                            self.queue.put(
+                                ("update_time", (elapsed_str, remaining_str)))
+
+                return not self.cancel_requested
+
+            # Scan directory with enhanced options
+            use_processes = self.use_process_pool_var.get()
+            adaptive_workers = self.adaptive_workers_var.get()
+            enable_pause_resume = self.enable_pause_resume_var.get()
+
+            # Store current job ID
+            self.current_job_id = job_id
+
+            # Scan directory
+            analyzed_files = self.file_analyzer.scan_directory(
+                source_dir,
+                batch_size=int(self.batch_size_var.get()),
+                batch_delay=float(self.batch_delay_var.get()),
+                callback=progress_callback,
+                use_processes=use_processes,
+                adaptive_workers=adaptive_workers,
+                job_id=job_id,
+                resume=(job_id is not None)
+            )
+
+            # Check if operation was cancelled or paused
+            if self.cancel_requested:
+                self.queue.put(("cancelled", None))
+                return
+
+            if self.is_paused:
+                self.queue.put(("paused", None))
+                return
+
+            # Store analyzed files
+            self.analyzed_files = analyzed_files
+
+            # Update file list
+            self.queue.put(("update_files", analyzed_files))
+
+            # If we have a target directory, organize files
+            if target_dir and analyzed_files:
+                # Get organization options
+                options = {
+                    "create_category_folders": self.create_category_folders_var.get(),
+                    "generate_summaries": self.generate_summaries_var.get(),
+                    "include_metadata": self.include_metadata_var.get(),
+                    "copy_instead_of_move": self.copy_instead_of_move_var.get(),
+                    "detect_duplicates": self.detect_duplicates_var.get(),
+                    "duplicate_action": self.duplicate_action_var.get(),
+                    "duplicate_strategy": self.duplicate_strategy_var.get(),
+                    "apply_tags": self.apply_tags_var.get(),
+                    "suggest_tags": self.suggest_tags_var.get(),
+                    "use_custom_rules": self.use_custom_rules_var.get(),
+                    "rules_file": self.rules_file_var.get()
+                }
+
+                # Organize files
+                self.queue.put(("status", "Organizing files..."))
+                result = self.file_organizer.organize_files(
+                    analyzed_files, target_dir, progress_callback, options)
+
+                # Show results
+                message = (
+                    f"Batch processing complete:\n"
+                    f"- {len(analyzed_files)} files analyzed\n"
+                    f"- {result['organized_files']} files organized\n"
+                    f"- {result['skipped_files']} files skipped\n"
+                    f"- {result['duplicate_files']} duplicate files\n"
+                    f"- {result['error_files']} errors"
+                )
+                self.queue.put(("success", message))
+            else:
+                # Just show analysis results
+                self.queue.put(
+                    ("success", f"Analysis complete: {len(analyzed_files)} files analyzed"))
+
+            # Update job list
+            self.queue.put(("update_job_list", None))
+
+        except Exception as e:
+            self.queue.put(("error", str(e)))
+        finally:
+            # Stop resource monitoring
+            self.stop_resource_monitoring()
+
+            # Reset UI
+            self.queue.put(("reset_ui", None))
+
+            # Mark as complete
+            self.queue.put(("complete", None))
+
+    def start_resource_monitoring(self):
+        """Start monitoring system resources"""
+        self.resource_monitoring = True
+        threading.Thread(
+            target=self.resource_monitoring_thread, daemon=True).start()
+
+    def stop_resource_monitoring(self):
+        """Stop monitoring system resources"""
+        self.resource_monitoring = False
+
+    def resource_monitoring_thread(self):
+        """Thread for monitoring system resources"""
+        try:
+            while self.resource_monitoring and self.running:
+                # Get resource usage
+                if hasattr(self.file_analyzer, "resource_monitor"):
+                    cpu_percent = self.file_analyzer.resource_monitor.get_cpu_percent()
+                    memory_percent = self.file_analyzer.resource_monitor.get_memory_percent()
+
+                    # Update UI
+                    self.cpu_usage_var.set(f"{cpu_percent:.1f}%")
+                    self.memory_usage_var.set(f"{memory_percent:.1f}%")
+
+                # Sleep for a bit
+                time.sleep(1.0)
+        except:
+            pass
+
+    def format_time(self, seconds):
+        """Format time in seconds to HH:MM:SS"""
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"

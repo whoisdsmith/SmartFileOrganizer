@@ -1,0 +1,161 @@
+{
+    "name": "Media Organization Template",
+    "description": "Template for organizing media files (audio and video)",
+    "author": "SmartFileOrganizer",
+    "version": "1.0.0",
+    "rules": [
+        {
+            "name": "audio_by_type",
+            "type": "organize",
+            "conditions": [
+                {
+                    "type": "extension",
+                    "extensions": [".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a"]
+                }
+            ],
+            "actions": [
+                {
+                    "type": "move",
+                    "destination": "Audio/{file_type}"
+                }
+            ]
+        },
+        {
+            "name": "audio_by_metadata",
+            "type": "organize",
+            "conditions": [
+                {
+                    "type": "extension",
+                    "extensions": [".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a"]
+                },
+                {
+                    "type": "has_metadata",
+                    "fields": ["artist", "album"]
+                }
+            ],
+            "actions": [
+                {
+                    "type": "move",
+                    "destination": "Audio/By Artist/{artist}/{album}"
+                },
+                {
+                    "type": "rename",
+                    "pattern": "{track_number} - {title}"
+                }
+            ]
+        },
+        {
+            "name": "video_by_type",
+            "type": "organize",
+            "conditions": [
+                {
+                    "type": "extension",
+                    "extensions": [".mp4", ".avi", ".mkv", ".mov", ".wmv", ".webm", ".flv"]
+                }
+            ],
+            "actions": [
+                {
+                    "type": "move",
+                    "destination": "Video/{file_type}"
+                }
+            ]
+        },
+        {
+            "name": "video_by_resolution",
+            "type": "organize",
+            "conditions": [
+                {
+                    "type": "extension",
+                    "extensions": [".mp4", ".avi", ".mkv", ".mov", ".wmv", ".webm", ".flv"]
+                },
+                {
+                    "type": "has_metadata",
+                    "fields": ["width", "height"]
+                }
+            ],
+            "actions": [
+                {
+                    "type": "move",
+                    "destination": "Video/By Resolution/{resolution_category}"
+                }
+            ]
+        },
+        {
+            "name": "video_by_duration",
+            "type": "organize",
+            "conditions": [
+                {
+                    "type": "extension",
+                    "extensions": [".mp4", ".avi", ".mkv", ".mov", ".wmv", ".webm", ".flv"]
+                },
+                {
+                    "type": "has_metadata",
+                    "fields": ["duration_seconds"]
+                }
+            ],
+            "actions": [
+                {
+                    "type": "move",
+                    "destination": "Video/By Duration/{duration_category}"
+                }
+            ]
+        }
+    ],
+    "file_type_mappings": {
+        ".mp3": "MP3 Audio",
+        ".wav": "WAV Audio",
+        ".flac": "FLAC Audio",
+        ".aac": "AAC Audio",
+        ".ogg": "OGG Audio",
+        ".m4a": "M4A Audio",
+        ".mp4": "MP4 Video",
+        ".avi": "AVI Video",
+        ".mkv": "MKV Video",
+        ".mov": "MOV Video",
+        ".wmv": "WMV Video",
+        ".webm": "WebM Video",
+        ".flv": "FLV Video"
+    },
+    "categories": {
+        "resolution_category": {
+            "4K": {"min_width": 3840, "min_height": 2160},
+            "1080p": {"min_width": 1920, "min_height": 1080},
+            "720p": {"min_width": 1280, "min_height": 720},
+            "SD": {"min_width": 0, "min_height": 0}
+        },
+        "duration_category": {
+            "Short": {"max_seconds": 300},
+            "Medium": {"min_seconds": 300, "max_seconds": 1800},
+            "Long": {"min_seconds": 1800}
+        }
+    },
+    "naming_patterns": {
+        "audio_file": "{track_number} - {title}",
+        "video_file": "{title} ({resolution})"
+    },
+    "metadata_rules": {
+        "audio": {
+            "required": ["title", "artist"],
+            "optional": ["album", "track_number", "genre", "year"]
+        },
+        "video": {
+            "required": ["title", "duration_seconds"],
+            "optional": ["resolution", "frame_rate", "codec"]
+        }
+    },
+    "media_config": {
+        "audio": {
+            "generate_waveform": true,
+            "transcribe": true,
+            "transcription_provider": "local",
+            "supported_formats": [".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a"]
+        },
+        "video": {
+            "generate_thumbnail": true,
+            "extract_audio": true,
+            "transcribe_audio": true,
+            "transcription_provider": "local",
+            "supported_formats": [".mp4", ".avi", ".mkv", ".mov", ".wmv", ".webm", ".flv"]
+        }
+    }
+}

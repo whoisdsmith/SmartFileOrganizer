@@ -15,6 +15,8 @@ from typing import Dict, List, Tuple, Optional, Union, Callable
 from .file_parser import FileParser
 from .ai_analyzer import AIAnalyzer
 from .image_analyzer import ImageAnalyzer
+from .media_analyzer import MediaAnalyzer
+from .transcription_service import TranscriptionService
 
 logger = logging.getLogger("AIDocumentOrganizer")
 
@@ -28,6 +30,8 @@ class FileAnalyzer:
         self.parser = FileParser()
         self.ai_analyzer = AIAnalyzer()
         self.image_analyzer = ImageAnalyzer()
+        self.media_analyzer = MediaAnalyzer()
+        self.transcription_service = TranscriptionService()
 
         # Supported file extensions
         self.supported_extensions = {
@@ -44,27 +48,42 @@ class FileAnalyzer:
             '.gif': 'Image',
             '.bmp': 'Image',
             '.tiff': 'Image',
-            '.webp': 'Image'
+            '.webp': 'Image',
+            # Audio formats
+            '.mp3': 'Audio',
+            '.wav': 'Audio',
+            '.flac': 'Audio',
+            '.aac': 'Audio',
+            '.ogg': 'Audio',
+            '.m4a': 'Audio',
+            # Video formats
+            '.mp4': 'Video',
+            '.avi': 'Video',
+            '.mkv': 'Video',
+            '.mov': 'Video',
+            '.wmv': 'Video',
+            '.webm': 'Video',
+            '.flv': 'Video'
         }
 
         # Default batch processing settings
-        self.batch_size = 5  # Reduced from 10 to 5 to be more conservative
-        # Further reduced thread pool size
-        self.max_workers = min(4, (os.cpu_count() or 1))
-        self.batch_delay = 10.0  # Increased from 5 to 10 seconds to wait between batches
-        self.progress_callback = None  # Callback for progress updates
+        self.default_batch_size = 10
+        self.default_batch_delay = 0.5
+        self.default_use_processes = True
+        self.default_adaptive_workers = True
 
-        # Batch processing state
-        self.is_paused = False
-        self.is_cancelled = False
+        # Job control
         self.current_job_id = None
-        self.job_state = {}
+        self.job_states = {}
+        self.pause_event = threading.Event()
+        self.cancel_event = threading.Event()
 
         # Resource monitoring
         self.resource_monitor = ResourceMonitor()
+        self.resource_monitor.start()
 
     def scan_directory(self, directory_path, batch_size=None, batch_delay=None, callback=None,
-                      use_processes=True, adaptive_workers=True, job_id=None, resume=False):
+                       use_processes=True, adaptive_workers=True, job_id=None, resume=False):
         """
         Scan a directory for supported files and analyze them
 
@@ -83,18 +102,19 @@ class FileAnalyzer:
         """
         # Reset state for new job
         if not resume:
-            self.is_paused = False
-            self.is_cancelled = False
+            self.pause_event.clear()
+            self.cancel_event.clear()
 
         # Generate or use job ID
-        if job_id and resume and job_id in self.job_state:
+        if job_id and resume and job_id in self.job_states:
             self.current_job_id = job_id
-            job_data = self.job_state[job_id]
-            logger.info(f"Resuming job {job_id} with {len(job_data['pending_files'])} files remaining")
+            job_data = self.job_states[job_id]
+            logger.info(
+                f"Resuming job {job_id} with {len(job_data['pending_files'])} files remaining")
         else:
             self.current_job_id = str(uuid.uuid4())
             # Initialize job state
-            self.job_state[self.current_job_id] = {
+            self.job_states[self.current_job_id] = {
                 'directory': directory_path,
                 'processed_files': [],
                 'pending_files': [],
@@ -107,32 +127,34 @@ class FileAnalyzer:
 
         # Set batch processing parameters
         if batch_size is not None:
-            self.batch_size = batch_size
+            self.default_batch_size = batch_size
         if batch_delay is not None:
-            self.batch_delay = batch_delay
+            self.default_batch_delay = batch_delay
+        self.default_use_processes = use_processes
+        self.default_adaptive_workers = adaptive_workers
         self.progress_callback = callback
 
         # Start resource monitoring
         self.resource_monitor.start()
 
         try:
-        # Get all files in the directory and subdirectories
-            if not resume or not self.job_state[job_id]['pending_files']:
-        all_files = []
-        for root, _, files in os.walk(directory_path):
-            for file in files:
-                file_path = os.path.join(root, file)
-                file_ext = os.path.splitext(file_path)[1].lower()
-                if file_ext in self.supported_extensions:
-                    all_files.append((file_path, file_ext))
+            # Get all files in the directory and subdirectories
+            if not resume or not self.job_states[job_id]['pending_files']:
+                all_files = []
+                for root, _, files in os.walk(directory_path):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        file_ext = os.path.splitext(file_path)[1].lower()
+                        if file_ext in self.supported_extensions:
+                            all_files.append((file_path, file_ext))
 
-                self.job_state[job_id]['pending_files'] = all_files
-                self.job_state[job_id]['total_files'] = len(all_files)
+                self.job_states[job_id]['pending_files'] = all_files
+                self.job_states[job_id]['total_files'] = len(all_files)
 
             # Get pending files from job state
-            all_files = self.job_state[job_id]['pending_files']
-            total_files = self.job_state[job_id]['total_files']
-            processed_files = self.job_state[job_id]['processed_files']
+            all_files = self.job_states[job_id]['pending_files']
+            total_files = self.job_states[job_id]['total_files']
+            processed_files = self.job_states[job_id]['processed_files']
 
             if not all_files:
                 logger.info("No supported files found in the directory")
@@ -140,88 +162,99 @@ class FileAnalyzer:
                     callback(0, 0, "No supported files found")
                 return []
 
-            logger.info(f"Found {len(all_files)} supported files in {directory_path}")
+            logger.info(
+                f"Found {len(all_files)} supported files in {directory_path}")
             if callback:
-                callback(len(processed_files), total_files, f"Found {len(all_files)} files to process")
+                callback(len(processed_files), total_files,
+                         f"Found {len(all_files)} files to process")
 
-        # Process files in batches
-        results = []
+            # Process files in batches
+            results = []
             processed_count = len(processed_files)
 
             # Add already processed files to results
             results.extend(processed_files)
 
             # Process remaining files in batches
-            for i in range(0, len(all_files), self.batch_size):
+            for i in range(0, len(all_files), self.default_batch_size):
                 # Check if paused or cancelled
-                if self.is_cancelled:
+                if self.cancel_event.is_set():
                     logger.info("Operation cancelled")
                     if callback:
-                        callback(processed_count, total_files, "Operation cancelled")
+                        callback(processed_count, total_files,
+                                 "Operation cancelled")
                     break
 
-                if self.is_paused:
+                if self.pause_event.is_set():
                     logger.info("Operation paused")
                     if callback:
-                        callback(processed_count, total_files, "Operation paused")
+                        callback(processed_count, total_files,
+                                 "Operation paused")
 
                     # Update job state
-                    self.job_state[job_id]['pending_files'] = all_files[i:]
-                    self.job_state[job_id]['processed_files'] = results
-                    self.job_state[job_id]['elapsed_time'] += time.time() - self.job_state[job_id]['start_time']
-                    self.job_state[job_id]['start_time'] = time.time()
+                    self.job_states[job_id]['pending_files'] = all_files[i:]
+                    self.job_states[job_id]['processed_files'] = results
+                    self.job_states[job_id]['elapsed_time'] += time.time() - \
+                        self.job_states[job_id]['start_time']
+                    self.job_states[job_id]['start_time'] = time.time()
 
                     # Stop resource monitoring
                     self.resource_monitor.stop()
                     return results
 
                 # Get batch of files
-                batch = all_files[i:i+self.batch_size]
+                batch = all_files[i:i+self.default_batch_size]
 
                 # Adjust worker count based on system resources if adaptive
-                if adaptive_workers:
+                if self.default_adaptive_workers:
                     self.max_workers = self._get_adaptive_worker_count()
 
                 # Process batch
                 if callback:
-                    callback(processed_count, total_files, f"Processing batch {i//self.batch_size + 1}/{(len(all_files)-1)//self.batch_size + 1}")
+                    callback(processed_count, total_files,
+                             f"Processing batch {i//self.default_batch_size + 1}/{(len(all_files)-1)//self.default_batch_size + 1}")
 
                 # Use process pool or thread pool based on configuration
-                if use_processes:
+                if self.default_use_processes:
                     batch_results = self._process_batch_with_processes(batch)
                 else:
-            batch_results = self._process_batch(batch)
+                    batch_results = self._process_batch(batch)
 
                 # Update results and processed count
-            results.extend(batch_results)
+                results.extend(batch_results)
                 processed_count += len(batch_results)
 
                 # Update job state
-                self.job_state[job_id]['pending_files'] = all_files[i+self.batch_size:]
-                self.job_state[job_id]['processed_files'] = results
+                self.job_states[job_id]['pending_files'] = all_files[i +
+                                                                    self.default_batch_size:]
+                self.job_states[job_id]['processed_files'] = results
 
-            # Update progress
+                # Update progress
                 if callback:
-                    callback(processed_count, total_files, f"Processed {processed_count}/{total_files} files")
+                    callback(processed_count, total_files,
+                             f"Processed {processed_count}/{total_files} files")
 
                 # Delay between batches if not the last batch
-                if i + self.batch_size < len(all_files) and not self.is_cancelled and not self.is_paused:
-                time.sleep(self.batch_delay)
+                if i + self.default_batch_size < len(all_files) and not self.cancel_event.is_set() and not self.pause_event.is_set():
+                    time.sleep(self.default_batch_delay)
 
             # Mark job as completed if not cancelled or paused
-            if not self.is_cancelled and not self.is_paused:
-                self.job_state[job_id]['completed'] = True
-                self.job_state[job_id]['elapsed_time'] += time.time() - self.job_state[job_id]['start_time']
+            if not self.cancel_event.is_set() and not self.pause_event.is_set():
+                self.job_states[job_id]['completed'] = True
+                self.job_states[job_id]['elapsed_time'] += time.time() - \
+                    self.job_states[job_id]['start_time']
 
                 # Calculate processing statistics
-                elapsed_time = self.job_state[job_id]['elapsed_time']
+                elapsed_time = self.job_states[job_id]['elapsed_time']
                 files_per_second = total_files / elapsed_time if elapsed_time > 0 else 0
 
-                logger.info(f"Completed processing {total_files} files in {elapsed_time:.2f} seconds ({files_per_second:.2f} files/sec)")
+                logger.info(
+                    f"Completed processing {total_files} files in {elapsed_time:.2f} seconds ({files_per_second:.2f} files/sec)")
                 if callback:
-                    callback(total_files, total_files, f"Completed processing {total_files} files")
+                    callback(total_files, total_files,
+                             f"Completed processing {total_files} files")
 
-        return results
+            return results
 
         except Exception as e:
             logger.error(f"Error scanning directory: {str(e)}")
@@ -257,7 +290,8 @@ class FileAnalyzer:
                     if result:
                         results.append(result)
                 except Exception as e:
-                    logger.error(f"Error processing file {file_path}: {str(e)}")
+                    logger.error(
+                        f"Error processing file {file_path}: {str(e)}")
                     logger.error(traceback.format_exc())
 
         return results
@@ -284,6 +318,8 @@ class FileAnalyzer:
                 parser = FileParser()
                 ai_analyzer = AIAnalyzer()
                 image_analyzer = ImageAnalyzer()
+                media_analyzer = MediaAnalyzer()
+                transcription_service = TranscriptionService()
 
                 # Get basic file info
                 file_info = self._get_file_info(file_path, file_ext)
@@ -293,7 +329,8 @@ class FileAnalyzer:
                     text_content = parser.extract_text(file_path, file_ext)
                     file_info['text_content'] = text_content
                 except Exception as e:
-                    logger.error(f"Error extracting text from {file_path}: {str(e)}")
+                    logger.error(
+                        f"Error extracting text from {file_path}: {str(e)}")
                     file_info['text_content'] = f"Error extracting text: {str(e)}"
 
                 # Extract metadata
@@ -301,7 +338,8 @@ class FileAnalyzer:
                     metadata = parser.extract_metadata(file_path, file_ext)
                     file_info['metadata'] = metadata
                 except Exception as e:
-                    logger.error(f"Error extracting metadata from {file_path}: {str(e)}")
+                    logger.error(
+                        f"Error extracting metadata from {file_path}: {str(e)}")
                     file_info['metadata'] = {'error': str(e)}
 
                 # Analyze with AI for document files
@@ -310,16 +348,36 @@ class FileAnalyzer:
                         ai_result = ai_analyzer.analyze_text(text_content)
                         file_info['ai_analysis'] = ai_result
                     except Exception as e:
-                        logger.error(f"Error analyzing {file_path} with AI: {str(e)}")
+                        logger.error(
+                            f"Error analyzing {file_path} with AI: {str(e)}")
                         file_info['ai_analysis'] = {'error': str(e)}
                 # Analyze with image analyzer for image files
-                else:
+                elif file_ext.lower() in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp']:
                     try:
                         image_result = image_analyzer.analyze_image(file_path)
                         file_info['image_analysis'] = image_result
                     except Exception as e:
-                        logger.error(f"Error analyzing image {file_path}: {str(e)}")
+                        logger.error(
+                            f"Error analyzing image {file_path}: {str(e)}")
                         file_info['image_analysis'] = {'error': str(e)}
+                # Analyze with media analyzer for audio files
+                elif file_ext.lower() in ['.mp3', '.wav', '.flac', '.aac', '.ogg', '.m4a']:
+                    try:
+                        audio_result = media_analyzer.analyze_audio(file_path)
+                        file_info['audio_analysis'] = audio_result
+                    except Exception as e:
+                        logger.error(
+                            f"Error analyzing audio {file_path}: {str(e)}")
+                        file_info['audio_analysis'] = {'error': str(e)}
+                # Analyze with media analyzer for video files
+                elif file_ext.lower() in ['.mp4', '.avi', '.mkv', '.mov', '.wmv', '.webm', '.flv']:
+                    try:
+                        video_result = media_analyzer.analyze_video(file_path)
+                        file_info['video_analysis'] = video_result
+                    except Exception as e:
+                        logger.error(
+                            f"Error analyzing video {file_path}: {str(e)}")
+                        file_info['video_analysis'] = {'error': str(e)}
 
                 # Put result in queue
                 queue.put(file_info)
@@ -353,57 +411,116 @@ class FileAnalyzer:
 
     def _process_single_file(self, file_path, file_ext):
         """
-        Process a single file
+        Process a single file and extract information
 
         Args:
             file_path: Path to the file
-            file_ext: File extension
+            file_ext: File extension (including the dot)
 
         Returns:
-            Dictionary with file information and analysis
+            Dictionary with file information
         """
         try:
             # Get basic file info
             file_info = self._get_file_info(file_path, file_ext)
 
             # Extract text content
-            try:
-                text_content = self.parser.extract_text(file_path, file_ext)
-                file_info['text_content'] = text_content
-            except Exception as e:
-                logger.error(f"Error extracting text from {file_path}: {str(e)}")
-                file_info['text_content'] = f"Error extracting text: {str(e)}"
+            file_info['content'] = self.parser.extract_text(file_path, file_ext)
 
             # Extract metadata
-            try:
-                metadata = self.parser.extract_metadata(file_path, file_ext)
-                file_info['metadata'] = metadata
-            except Exception as e:
-                logger.error(f"Error extracting metadata from {file_path}: {str(e)}")
-                file_info['metadata'] = {'error': str(e)}
+            file_info['metadata'] = self.parser.extract_metadata(file_path, file_ext)
 
-            # Analyze with AI for document files
-            if file_ext.lower() not in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp']:
+            # Process image files with image analyzer
+            if file_ext.lower() in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp']:
                 try:
-                    ai_result = self.ai_analyzer.analyze_text(text_content)
-                    file_info['ai_analysis'] = ai_result
+                    image_analysis = self.image_analyzer.analyze_image(file_path)
+                    file_info['image_analysis'] = image_analysis
                 except Exception as e:
-                    logger.error(f"Error analyzing {file_path} with AI: {str(e)}")
-                    file_info['ai_analysis'] = {'error': str(e)}
-            # Analyze with image analyzer for image files
-            else:
+                    logger.error(f"Error in image analysis for {file_path}: {str(e)}")
+                    file_info['image_analysis_error'] = str(e)
+
+            # Process audio files with media analyzer
+            elif file_ext.lower() in ['.mp3', '.wav', '.flac', '.aac', '.ogg', '.m4a']:
                 try:
-                    image_result = self.image_analyzer.analyze_image(file_path)
-                    file_info['image_analysis'] = image_result
+                    audio_analysis = self.media_analyzer.analyze_audio(file_path)
+                    file_info['audio_analysis'] = audio_analysis
+
+                    # Generate audio waveform
+                    waveform_path = self.media_analyzer.generate_audio_waveform(file_path)
+                    if waveform_path:
+                        file_info['audio_waveform'] = waveform_path
+
+                    # Transcribe audio if enabled
+                    # This could be controlled by a setting
+                    transcription = self.transcription_service.transcribe(file_path)
+                    if 'text' in transcription and transcription['text']:
+                        file_info['transcription'] = transcription
                 except Exception as e:
-                    logger.error(f"Error analyzing image {file_path}: {str(e)}")
-                    file_info['image_analysis'] = {'error': str(e)}
+                    logger.error(f"Error in audio analysis for {file_path}: {str(e)}")
+                    file_info['audio_analysis_error'] = str(e)
+
+            # Process video files with media analyzer
+            elif file_ext.lower() in ['.mp4', '.avi', '.mkv', '.mov', '.wmv', '.webm', '.flv']:
+                try:
+                    video_analysis = self.media_analyzer.analyze_video(file_path)
+                    file_info['video_analysis'] = video_analysis
+
+                    # Generate video thumbnail
+                    thumbnail_path = self.media_analyzer.generate_video_thumbnail(file_path)
+                    if thumbnail_path:
+                        file_info['video_thumbnail'] = thumbnail_path
+
+                    # Extract audio for transcription if enabled
+                    # This could be controlled by a setting
+                    audio_path = self.media_analyzer.extract_audio_from_video(file_path)
+                    if audio_path:
+                        transcription = self.transcription_service.transcribe(audio_path)
+                        if 'text' in transcription and transcription['text']:
+                            file_info['transcription'] = transcription
+                except Exception as e:
+                    logger.error(f"Error in video analysis for {file_path}: {str(e)}")
+                    file_info['video_analysis_error'] = str(e)
+
+            # Process with AI analyzer if content is available
+            if file_info.get('content'):
+                try:
+                    # Get AI analysis
+                    ai_analysis = self.ai_analyzer.analyze_text(
+                        file_info['content'],
+                        file_path=file_path,
+                        metadata=file_info.get('metadata', {})
+                    )
+                    file_info['ai_analysis'] = ai_analysis
+                except Exception as e:
+                    logger.error(f"Error in AI analysis for {file_path}: {str(e)}")
+                    file_info['ai_analysis_error'] = str(e)
+
+            # If we have transcription, also analyze it with AI
+            if 'transcription' in file_info and 'text' in file_info['transcription']:
+                try:
+                    # Get AI analysis of transcription
+                    transcription_analysis = self.ai_analyzer.analyze_text(
+                        file_info['transcription']['text'],
+                        file_path=file_path,
+                        metadata=file_info.get('metadata', {}),
+                        context="This is a transcription of audio content."
+                    )
+                    file_info['transcription_analysis'] = transcription_analysis
+                except Exception as e:
+                    logger.error(f"Error in transcription analysis for {file_path}: {str(e)}")
+                    file_info['transcription_analysis_error'] = str(e)
 
             return file_info
+
         except Exception as e:
             logger.error(f"Error processing file {file_path}: {str(e)}")
-            logger.error(traceback.format_exc())
-            return None
+            return {
+                'file_path': file_path,
+                'file_name': os.path.basename(file_path),
+                'file_extension': file_ext,
+                'error': str(e),
+                'traceback': traceback.format_exc()
+            }
 
     def _get_file_info(self, file_path, file_ext):
         """
@@ -457,21 +574,21 @@ class FileAnalyzer:
         """
         Pause the current operation
         """
-        self.is_paused = True
+        self.pause_event.set()
         logger.info("Operation pause requested")
 
     def resume_operation(self):
         """
         Resume the paused operation
         """
-        self.is_paused = False
+        self.pause_event.clear()
         logger.info("Operation resume requested")
 
     def cancel_operation(self):
         """
         Cancel the current operation
         """
-        self.is_cancelled = True
+        self.cancel_event.set()
         logger.info("Operation cancel requested")
 
     def get_job_state(self, job_id=None):
@@ -487,8 +604,8 @@ class FileAnalyzer:
         if job_id is None:
             job_id = self.current_job_id
 
-        if job_id in self.job_state:
-            return self.job_state[job_id]
+        if job_id in self.job_states:
+            return self.job_states[job_id]
         return None
 
     def get_job_progress(self, job_id=None):
@@ -504,13 +621,14 @@ class FileAnalyzer:
         if job_id is None:
             job_id = self.current_job_id
 
-        if job_id in self.job_state:
-            job_data = self.job_state[job_id]
+        if job_id in self.job_states:
+            job_data = self.job_states[job_id]
             total_files = job_data['total_files']
             processed_files = len(job_data['processed_files'])
 
             # Calculate progress percentage
-            progress_percent = (processed_files / total_files * 100) if total_files > 0 else 0
+            progress_percent = (
+                processed_files / total_files * 100) if total_files > 0 else 0
 
             # Calculate estimated time remaining
             elapsed_time = job_data['elapsed_time']
@@ -531,8 +649,8 @@ class FileAnalyzer:
                 'progress_percent': progress_percent,
                 'elapsed_time': elapsed_time,
                 'estimated_time_remaining': estimated_time_remaining,
-                'is_paused': self.is_paused,
-                'is_cancelled': self.is_cancelled,
+                'is_paused': self.pause_event.is_set(),
+                'is_cancelled': self.cancel_event.is_set(),
                 'is_completed': job_data['completed']
             }
         return None
@@ -550,7 +668,7 @@ class FileAnalyzer:
         try:
             # Create a serializable version of the job state
             serializable_state = {}
-            for job_id, job_data in self.job_state.items():
+            for job_id, job_data in self.job_states.items():
                 serializable_state[job_id] = {
                     'directory': job_data['directory'],
                     'pending_files': job_data['pending_files'],
@@ -565,7 +683,7 @@ class FileAnalyzer:
                 for file_info in job_data['processed_files']:
                     # Remove non-serializable data
                     serializable_file_info = {k: v for k, v in file_info.items()
-                                             if k not in ['text_content']}
+                                              if k not in ['text_content']}
                     processed_files.append(serializable_file_info)
 
                 serializable_state[job_id]['processed_files'] = processed_files
@@ -591,7 +709,7 @@ class FileAnalyzer:
         """
         try:
             with open(file_path, 'r') as f:
-                self.job_state = json.load(f)
+                self.job_states = json.load(f)
             return True
         except Exception as e:
             logger.error(f"Error loading job state: {str(e)}")
@@ -684,4 +802,4 @@ class ResourceMonitor:
             return {
                 'cpu_percent': self.cpu_percent,
                 'memory_percent': self.memory_percent
-        }
+            }

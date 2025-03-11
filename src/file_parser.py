@@ -9,6 +9,14 @@ from PIL.ExifTags import TAGS, GPSTAGS
 import io
 import datetime
 
+# Import media handling libraries
+try:
+    from pydub import AudioSegment
+    import ffmpeg
+    MEDIA_SUPPORT = True
+except ImportError:
+    MEDIA_SUPPORT = False
+
 
 class FileParser:
     """
@@ -42,6 +50,10 @@ class FileParser:
             return self._parse_pdf(file_path)
         elif file_ext.lower() in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp']:
             return self._parse_image(file_path)
+        elif file_ext.lower() in ['.mp3', '.wav', '.flac', '.aac', '.ogg', '.m4a']:
+            return self._parse_audio(file_path)
+        elif file_ext.lower() in ['.mp4', '.avi', '.mkv', '.mov', '.wmv', '.webm', '.flv']:
+            return self._parse_video(file_path)
         else:
             raise ValueError(f"Unsupported file extension: {file_ext}")
 
@@ -54,60 +66,40 @@ class FileParser:
             file_ext: File extension (including the dot)
 
         Returns:
-            Dictionary with metadata
+            Dictionary containing metadata
         """
-        # Basic metadata for all files
+        # Basic file metadata
         file_stat = os.stat(file_path)
         metadata = {
-            'filename': os.path.basename(file_path),
+            'file_name': os.path.basename(file_path),
+            'file_path': file_path,
             'file_size': file_stat.st_size,
-            'created_time': datetime.datetime.fromtimestamp(file_stat.st_ctime).isoformat(),
-            'modified_time': datetime.datetime.fromtimestamp(file_stat.st_mtime).isoformat(),
+            'creation_time': datetime.datetime.fromtimestamp(file_stat.st_ctime).isoformat(),
+            'modification_time': datetime.datetime.fromtimestamp(file_stat.st_mtime).isoformat(),
             'file_extension': file_ext,
         }
 
-        # File type specific metadata
-        if file_ext == '.pdf':
-            try:
-                with open(file_path, 'rb') as file:
-                    reader = PyPDF2.PdfReader(file)
-                    if reader.metadata:
-                        for key, value in reader.metadata.items():
-                            if key.startswith('/'):
-                                clean_key = key[1:].lower()
-                                metadata[clean_key] = value
-                    metadata['page_count'] = len(reader.pages)
-            except Exception as e:
-                metadata['extraction_error'] = str(e)
-
-        elif file_ext == '.docx':
-            try:
-                doc = docx.Document(file_path)
-                metadata['page_count'] = len(doc.sections)
-                metadata['paragraph_count'] = len(doc.paragraphs)
-
-                # Try to extract core properties
-                try:
-                    core_props = doc.core_properties
-                    if hasattr(core_props, 'author') and core_props.author:
-                        metadata['author'] = core_props.author
-                    if hasattr(core_props, 'title') and core_props.title:
-                        metadata['title'] = core_props.title
-                    if hasattr(core_props, 'created') and core_props.created:
-                        metadata['doc_created'] = core_props.created.isoformat()
-                    if hasattr(core_props, 'modified') and core_props.modified:
-                        metadata['doc_modified'] = core_props.modified.isoformat()
-                except:
-                    pass
-            except Exception as e:
-                metadata['extraction_error'] = str(e)
-
-        elif file_ext.lower() in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp']:
-            try:
+        # Extract file type specific metadata
+        try:
+            if file_ext == '.pdf':
+                pdf_metadata = self._extract_pdf_metadata(file_path)
+                metadata.update(pdf_metadata)
+            elif file_ext == '.docx':
+                docx_metadata = self._extract_docx_metadata(file_path)
+                metadata.update(docx_metadata)
+            elif file_ext.lower() in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp']:
                 image_metadata = self._extract_image_metadata(file_path)
                 metadata.update(image_metadata)
-            except Exception as e:
-                metadata['extraction_error'] = str(e)
+            elif file_ext.lower() in ['.mp3', '.wav', '.flac', '.aac', '.ogg', '.m4a']:
+                if MEDIA_SUPPORT:
+                    audio_metadata = self._extract_audio_metadata(file_path)
+                    metadata.update(audio_metadata)
+            elif file_ext.lower() in ['.mp4', '.avi', '.mkv', '.mov', '.wmv', '.webm', '.flv']:
+                if MEDIA_SUPPORT:
+                    video_metadata = self._extract_video_metadata(file_path)
+                    metadata.update(video_metadata)
+        except Exception as e:
+            metadata['metadata_error'] = str(e)
 
         return metadata
 
@@ -313,6 +305,200 @@ class FileParser:
                 return text
         except Exception as e:
             return f"Error parsing image: {str(e)}"
+
+    def _parse_audio(self, file_path):
+        """
+        Parse audio file and return a text representation
+
+        Args:
+            file_path: Path to the audio file
+
+        Returns:
+            Text representation of the audio file (metadata as text)
+        """
+        if not MEDIA_SUPPORT:
+            return "Audio file parsing requires pydub and ffmpeg libraries."
+
+        try:
+            # Extract metadata
+            metadata = self._extract_audio_metadata(file_path)
+
+            # Convert metadata to text representation
+            text_parts = [
+                f"Audio File: {os.path.basename(file_path)}",
+                f"Duration: {metadata.get('duration_seconds', 0):.2f} seconds",
+                f"Channels: {metadata.get('channels', 'Unknown')}",
+                f"Sample Rate: {metadata.get('sample_rate_hz', 'Unknown')} Hz",
+                f"Bit Rate: {metadata.get('bitrate', 'Unknown')} bps",
+            ]
+
+            # Add ID3 tags if available
+            for tag_name, tag_value in metadata.items():
+                if tag_name.startswith('id3_'):
+                    text_parts.append(f"{tag_name.replace('id3_', '')}: {tag_value}")
+
+            return "\n".join(text_parts)
+
+        except Exception as e:
+            return f"Error parsing audio file: {str(e)}"
+
+    def _parse_video(self, file_path):
+        """
+        Parse video file and return a text representation
+
+        Args:
+            file_path: Path to the video file
+
+        Returns:
+            Text representation of the video file (metadata as text)
+        """
+        if not MEDIA_SUPPORT:
+            return "Video file parsing requires ffmpeg library."
+
+        try:
+            # Extract metadata
+            metadata = self._extract_video_metadata(file_path)
+
+            # Convert metadata to text representation
+            text_parts = [
+                f"Video File: {os.path.basename(file_path)}",
+                f"Duration: {metadata.get('duration_seconds', 0):.2f} seconds",
+                f"Resolution: {metadata.get('width', 'Unknown')}x{metadata.get('height', 'Unknown')}",
+                f"Video Codec: {metadata.get('video_codec', 'Unknown')}",
+                f"Audio Codec: {metadata.get('audio_codec', 'Unknown')}",
+                f"Frame Rate: {metadata.get('frame_rate', 'Unknown')} fps",
+                f"Bit Rate: {metadata.get('bitrate', 'Unknown')} bps",
+            ]
+
+            return "\n".join(text_parts)
+
+        except Exception as e:
+            return f"Error parsing video file: {str(e)}"
+
+    def _extract_audio_metadata(self, file_path):
+        """
+        Extract metadata from an audio file
+
+        Args:
+            file_path: Path to the audio file
+
+        Returns:
+            Dictionary containing audio metadata
+        """
+        if not MEDIA_SUPPORT:
+            return {"error": "Audio metadata extraction requires pydub library."}
+
+        try:
+            # Load audio file
+            audio = AudioSegment.from_file(file_path)
+
+            # Extract basic metadata
+            metadata = {
+                'duration_seconds': len(audio) / 1000,
+                'channels': audio.channels,
+                'sample_width_bytes': audio.sample_width,
+                'sample_rate_hz': audio.frame_rate,
+                'frame_width': audio.frame_width,
+                'bitrate': int((audio.frame_rate * audio.frame_width * audio.channels * 8)),
+                'file_size_bytes': os.path.getsize(file_path),
+            }
+
+            # TODO: Extract ID3 tags for MP3 files
+            # This would require a library like mutagen
+
+            return metadata
+
+        except Exception as e:
+            return {"error": str(e)}
+
+    def _extract_video_metadata(self, file_path):
+        """
+        Extract metadata from a video file
+
+        Args:
+            file_path: Path to the video file
+
+        Returns:
+            Dictionary containing video metadata
+        """
+        if not MEDIA_SUPPORT:
+            return {"error": "Video metadata extraction requires ffmpeg library."}
+
+        try:
+            # Use ffmpeg to get video metadata
+            probe = ffmpeg.probe(file_path)
+
+            # Extract video stream info
+            video_info = next((stream for stream in probe['streams']
+                              if stream['codec_type'] == 'video'), None)
+
+            # Extract audio stream info
+            audio_info = next((stream for stream in probe['streams']
+                              if stream['codec_type'] == 'audio'), None)
+
+            # Extract format info
+            format_info = probe['format']
+
+            # Build metadata dictionary
+            metadata = {
+                'duration_seconds': float(format_info.get('duration', 0)),
+                'file_size_bytes': os.path.getsize(file_path),
+                'format_name': format_info.get('format_name', ''),
+                'bitrate': int(format_info.get('bit_rate', 0)),
+            }
+
+            # Add video stream info if available
+            if video_info:
+                metadata.update({
+                    'width': int(video_info.get('width', 0)),
+                    'height': int(video_info.get('height', 0)),
+                    'video_codec': video_info.get('codec_name', ''),
+                    'video_codec_long': video_info.get('codec_long_name', ''),
+                    'frame_rate': self._calculate_frame_rate(video_info),
+                    'aspect_ratio': video_info.get('display_aspect_ratio', ''),
+                })
+
+            # Add audio stream info if available
+            if audio_info:
+                metadata.update({
+                    'audio_codec': audio_info.get('codec_name', ''),
+                    'audio_codec_long': audio_info.get('codec_long_name', ''),
+                    'audio_channels': int(audio_info.get('channels', 0)),
+                    'audio_sample_rate': int(audio_info.get('sample_rate', 0)),
+                })
+
+            return metadata
+
+        except Exception as e:
+            return {"error": str(e)}
+
+    def _calculate_frame_rate(self, video_info):
+        """
+        Calculate the frame rate from ffmpeg video stream info
+
+        Args:
+            video_info: Dictionary containing video stream information
+
+        Returns:
+            Frame rate as a float
+        """
+        # Try to get frame rate from avg_frame_rate
+        if 'avg_frame_rate' in video_info:
+            try:
+                num, den = video_info['avg_frame_rate'].split('/')
+                return float(num) / float(den)
+            except (ValueError, ZeroDivisionError):
+                pass
+
+        # Try to get frame rate from r_frame_rate
+        if 'r_frame_rate' in video_info:
+            try:
+                num, den = video_info['r_frame_rate'].split('/')
+                return float(num) / float(den)
+            except (ValueError, ZeroDivisionError):
+                pass
+
+        return 0.0
 
     def _extract_image_metadata(self, file_path):
         """

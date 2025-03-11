@@ -18,3 +18,15 @@ PyPDF2>=3.0.0
 chardet>=5.1.0
 psutil>=5.9.5
 exifread>=3.0.0
+
+# Stage 3 dependencies
+
+ffmpeg-python>=0.2.0
+pydub>=0.25.1
+moviepy>=1.0.3
+google-api-python-client>=2.100.0
+google-auth-oauthlib>=1.0.0
+dropbox>=11.36.2
+pyyaml>=6.0.1
+python-speech-recognition>=0.1.3
+cryptography>=41.0.3

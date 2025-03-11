@@ -1,0 +1,44 @@
+---
+description: Rules for file parsing and organization
+globs: src/file_parser.py, src/file_organizer.py
+alwaysApply: false
+---
+# Guidelines
+
+- **File Parsing (`src/file_parser.py`)**
+  - `extract_text`:
+    - Handle CSV, Excel, HTML, Markdown, Text, and Word files.
+    - Detect encoding with `chardet`.
+    - For CSV and Excel, use `pandas`.  Limit rows read for large files.
+    - For HTML, use `BeautifulSoup`.
+    - For Word (.docx), use `docx`.
+    - Provide fallback mechanisms for parsing errors.
+
+  - `extract_metadata`:
+    - Extract metadata relevant to the file type (e.g. author, title, creation date for .docx files, sheet names and number of columns for Excel)
+
+- **File Organization (`src/file_organizer.py`)**
+    - `organize_files`:
+       - Organize files based on AI analysis (category, keywords, summary).
+       - Create category directories (if enabled).
+       - Handle duplicate filenames.
+       - Copy or move files (configurable).
+    - `_create_metadata_file`:
+       - Create `.meta.txt` files with AI analysis: filename, path, type, size, category, theme, keywords, summary, related documents.
+    - `_create_summary_file`:
+      - Create `_summary.txt` files with a formatted summary and related documents section.
+
+- **Folder Report Generation (`src/file_organizer.py`)**:
+    - `generate_folder_report`:
+        - Generate a Markdown report for a given folder.
+        - Include category statistics, file list (grouped by category).
+        - Extract information from `.meta.txt` files.
+        - Include content summaries (optional).
+        - Analyze and document relationships between documents.
+
+- **Utility Functions (`src/utils.py`)**:
+    - `get_readable_size`: Convert bytes to human-readable format (KB, MB, GB, etc.).
+    - `sanitize_filename`: Make strings safe for filenames.
+    - `truncate_text`: Limit text length with ellipsis.
+    - `strip_html_tags`: Remove HTML tags.
+    - `is_file_locked`: Check file lock status.

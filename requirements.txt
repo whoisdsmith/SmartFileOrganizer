@@ -97,3 +97,14 @@ PyPDF2
 pypdf
 reportlab
 pillow
+ffmpeg-python
+matplotlib
+mutagen
+whisper
+SpeechRecognition
+ffmpeg-python
+matplotlib
+mutagen
+pydub
+SpeechRecognition
+scipy

@@ -1,5 +1,11 @@
 {pkgs}: {
   deps = [
+    pkgs.xsimd
+    pkgs.qhull
+    pkgs.gtk3
+    pkgs.gobject-introspection
+    pkgs.ghostscript
+    pkgs.cairo
     pkgs.hdf5
     pkgs.rustc
     pkgs.pkg-config

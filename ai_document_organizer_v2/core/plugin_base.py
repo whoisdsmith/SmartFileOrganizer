@@ -328,6 +328,141 @@ class OrganizerPlugin(BasePlugin):
         pass
 
 
+class MediaAnalyzerPlugin(BasePlugin):
+    """
+    Base class for media analyzer plugins.
+    
+    Media analyzer plugins are responsible for analyzing audio/video files,
+    extracting metadata, and generating previews or thumbnails.
+    """
+    
+    plugin_type = "media_analyzer"
+    
+    # List of supported file extensions (must be set by subclasses)
+    supported_extensions = []
+    
+    def __init__(self, plugin_id: str, name: Optional[str] = None, version: Optional[str] = None,
+                 description: Optional[str] = None):
+        """
+        Initialize the media analyzer plugin.
+        
+        Args:
+            plugin_id: Unique identifier for the plugin
+            name: Plugin name (if None, uses class attribute)
+            version: Plugin version (if None, uses class attribute)
+            description: Plugin description (if None, uses class attribute)
+        """
+        super().__init__(plugin_id, name, version, description)
+        
+        # Make sure subclasses set supported_extensions
+        if not hasattr(self.__class__, "supported_extensions") or not self.__class__.supported_extensions:
+            self.supported_extensions = []
+            logger.warning(f"Plugin {self.name} does not define supported_extensions")
+        else:
+            self.supported_extensions = self.__class__.supported_extensions
+    
+    @abstractmethod
+    def analyze_media(self, file_path: str) -> Dict[str, Any]:
+        """
+        Analyze a media file and extract content and metadata.
+        
+        Args:
+            file_path: Path to the file to analyze
+            
+        Returns:
+            Dictionary containing:
+            - 'metadata': Dictionary with media metadata
+            - 'preview_path': Path to generated preview/thumbnail (if any)
+            - 'transcription': Transcription results (if available)
+            - 'success': Boolean indicating success/failure
+            - 'error': Error message if analysis failed
+        """
+        pass
+    
+    def can_analyze(self, file_path: str) -> bool:
+        """
+        Check if this plugin can analyze the given file.
+        
+        Args:
+            file_path: Path to the file to check
+            
+        Returns:
+            True if this plugin can analyze the file, False otherwise
+        """
+        _, ext = os.path.splitext(file_path)
+        return ext.lower() in [x.lower() for x in self.supported_extensions]
+    
+    def generate_preview(self, file_path: str, output_path: Optional[str] = None) -> Optional[str]:
+        """
+        Generate a preview or thumbnail for the media file.
+        
+        Args:
+            file_path: Path to the media file
+            output_path: Optional path to save the preview
+            
+        Returns:
+            Path to the generated preview or None if generation failed
+        """
+        return None
+
+
+class TranscriptionPlugin(BasePlugin):
+    """
+    Base class for transcription service plugins.
+    
+    Transcription plugins provide speech-to-text capabilities for
+    audio and video files.
+    """
+    
+    plugin_type = "transcription"
+    
+    def __init__(self, plugin_id: str, name: Optional[str] = None, version: Optional[str] = None,
+                 description: Optional[str] = None):
+        """
+        Initialize the transcription plugin.
+        
+        Args:
+            plugin_id: Unique identifier for the plugin
+            name: Plugin name (if None, uses class attribute)
+            version: Plugin version (if None, uses class attribute)
+            description: Plugin description (if None, uses class attribute)
+        """
+        super().__init__(plugin_id, name, version, description)
+    
+    @abstractmethod
+    def transcribe(self, audio_path: str, language: str = 'en-US', 
+                   options: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Transcribe audio content.
+        
+        Args:
+            audio_path: Path to the audio file
+            language: Language code for transcription
+            options: Optional dictionary with transcription options
+            
+        Returns:
+            Dictionary containing transcription results:
+            - 'text': Full transcription text
+            - 'segments': List of time-aligned segments (if available)
+            - 'confidence': Overall confidence score (0-1)
+            - 'language': Detected or specified language
+            - 'success': Boolean indicating success/failure
+            - 'error': Error message if transcription failed
+        """
+        pass
+    
+    def get_supported_languages(self) -> List[Dict[str, str]]:
+        """
+        Get list of supported languages.
+        
+        Returns:
+            List of dictionaries with language information:
+            - 'code': Language code (e.g., 'en-US')
+            - 'name': Language name (e.g., 'English (US)')
+        """
+        return []
+
+
 class UtilityPlugin(BasePlugin):
     """
     Base class for utility plugins.

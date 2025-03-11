@@ -119,3 +119,4 @@ mutagen
 numpy
 pydub
 scipy
+psycopg2-binary

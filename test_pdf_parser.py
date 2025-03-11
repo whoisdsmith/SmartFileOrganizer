@@ -48,8 +48,8 @@ def main():
     # Initialize settings manager
     settings_manager = SettingsManager()
     
-    # Initialize plugin manager with settings_manager as the second parameter
-    plugin_manager = PluginManager(None, settings_manager)
+    # Initialize plugin manager with settings_manager parameter
+    plugin_manager = PluginManager(settings_manager=settings_manager)
     
     # Discover plugins
     logger.info("Discovering plugins...")

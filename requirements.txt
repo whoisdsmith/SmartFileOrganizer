@@ -96,3 +96,4 @@ PyPDF2
 PyPDF2
 pypdf
 reportlab
+pillow

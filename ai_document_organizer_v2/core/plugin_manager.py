@@ -28,14 +28,17 @@ class PluginManager:
     - Handle plugin dependencies and conflicts
     """
     
-    def __init__(self, plugin_dirs: Optional[List[str]] = None, settings_manager = None):
+    def __init__(self, settings_manager = None, plugin_dirs: Optional[List[str]] = None):
         """
         Initialize the plugin manager.
         
         Args:
-            plugin_dirs: Optional list of plugin directories. If None, uses default.
             settings_manager: Optional settings manager to provide to plugins.
+            plugin_dirs: Optional list of plugin directories. If None, uses default.
         """
+        # Store settings manager
+        self.settings_manager = settings_manager
+        
         # Default plugin directories
         if plugin_dirs is None:
             # First, add the built-in plugins directory
@@ -48,9 +51,6 @@ class PluginManager:
                 self.plugin_dirs.append(user_plugins_dir)
         else:
             self.plugin_dirs = plugin_dirs
-        
-        # Store settings manager
-        self.settings_manager = settings_manager
         
         # Plugin registry
         self.plugins = {}  # plugin_id -> plugin instance

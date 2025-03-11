@@ -5,12 +5,13 @@ import tkinter as tk
 import logging
 import ctypes
 from pathlib import Path
+import argparse
 
 # Add src directory to the path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 
-def setup_logging():
+def setup_logging(log_to_file_only=False):
     """Set up logging for the application"""
     try:
         # Windows-specific logging directory
@@ -28,16 +29,22 @@ def setup_logging():
         log_dir = os.path.dirname(os.path.abspath(__file__))
         log_file = os.path.join(log_dir, "app.log")
 
+    # Configure handlers based on the log_to_file_only setting
+    handlers = [logging.FileHandler(log_file)]
+
+    # Add console handler only if not log_to_file_only
+    if not log_to_file_only:
+        handlers.append(logging.StreamHandler())
+
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler(log_file),
-            logging.StreamHandler()
-        ]
+        handlers=handlers
     )
 
-    return logging.getLogger("AIDocumentOrganizer")
+    logger = logging.getLogger("AIDocumentOrganizer")
+    logger.info(f"Logging initialized (log_to_file_only={log_to_file_only})")
+    return logger
 
 
 def is_windows_admin():
@@ -55,8 +62,14 @@ def main():
     Main entry point for the Document Organizer application.
     Initializes and starts the GUI application.
     """
+    # Check for command-line arguments
+    parser = argparse.ArgumentParser(description='AI Document Organizer')
+    parser.add_argument('--log-to-file-only', action='store_true',
+                        help='Log to file only, not to console')
+    args = parser.parse_args()
+
     # Setup logging
-    logger = setup_logging()
+    logger = setup_logging(log_to_file_only=args.log_to_file_only)
     logger.info("Starting AI Document Organizer application")
 
     # Windows 10/11 DPI awareness (prevents blurry text)

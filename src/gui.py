@@ -58,6 +58,12 @@ class DocumentOrganizerApp:
         self.theme_var = tk.StringVar(
             value=theme if isinstance(theme, str) else "clam")
 
+        # Logging options
+        log_to_file_only = self.settings_manager.get_setting(
+            "log_to_file_only", False)
+        self.log_to_file_only = tk.BooleanVar(
+            value=log_to_file_only if isinstance(log_to_file_only, bool) else False)
+
         # Organization rule variables
         create_folders = self.settings_manager.get_setting(
             "organization_rules.create_category_folders", True)
@@ -86,6 +92,7 @@ class DocumentOrganizerApp:
         self.status_queue = queue.Queue()
         self.is_scanning = False
         self.is_organizing = False
+        self.cancel_requested = False
         self.scanned_files = []
         self.total_files = 0
         self.processed_files = 0
@@ -239,6 +246,8 @@ class DocumentOrganizerApp:
             self.action_frame, text="Organize Files", command=self.organize_files)
         self.report_button = ttk.Button(
             self.action_frame, text="Generate Report", command=self.generate_folder_report)
+        self.cancel_button = ttk.Button(
+            self.action_frame, text="Cancel", command=self.cancel_operation, state=tk.DISABLED)
 
         # Bind tree selection event
         self.tree.bind("<<TreeviewSelect>>", self.show_file_details)
@@ -307,6 +316,7 @@ class DocumentOrganizerApp:
             row=2, column=0, columnspan=2, sticky='e', padx=10, pady=10)
         self.report_button.pack(side=tk.RIGHT, padx=(0, 5))
         self.organize_button.pack(side=tk.RIGHT, padx=(0, 5))
+        self.cancel_button.pack(side=tk.RIGHT, padx=(0, 5))
 
         # Configure grid weights for main_tab (not the root)
         self.main_tab.grid_columnconfigure(0, weight=3)
@@ -359,6 +369,7 @@ class DocumentOrganizerApp:
 
         self.scanned_files = []
         self.is_scanning = True
+        self.cancel_requested = False
         self.total_files = 0
         self.processed_files = 0
 
@@ -369,6 +380,9 @@ class DocumentOrganizerApp:
         self.processed_label.config(text="Processed: 0")
         self.total_label.config(text="Total: 0")
         self.batch_status_label.config(text="Current Batch: 0/0")
+
+        # Enable cancel button
+        self.cancel_button.config(state=tk.NORMAL)
 
         # Update status
         self.status_queue.put(("status", "Scanning files..."))
@@ -395,6 +409,9 @@ class DocumentOrganizerApp:
                     "percentage": int((processed / max(1, total)) * 100)
                 }))
 
+                # Check for cancellation
+                return not self.cancel_requested
+
             # Scan the directory with progress tracking
             files = self.analyzer.scan_directory(
                 directory,
@@ -402,7 +419,11 @@ class DocumentOrganizerApp:
                 batch_delay=batch_delay,
                 callback=progress_callback
             )
-            self.status_queue.put(("files", files))
+
+            if self.cancel_requested:
+                self.status_queue.put(("cancelled", None))
+            else:
+                self.status_queue.put(("files", files))
         except Exception as e:
             logger.error(f"Error scanning directory: {str(e)}")
             self.status_queue.put(("error", str(e)))
@@ -455,27 +476,48 @@ class DocumentOrganizerApp:
                     self.is_organizing = False
                     self.progress_bar.stop()
                     self.status_label.config(text="Ready")
+                    self.cancel_button.config(state=tk.DISABLED)
 
                 elif message_type == "success":
                     messagebox.showinfo("Success", message)
                     self.progress_details.config(text=message)
 
+                elif message_type == "cancelled":
+                    messagebox.showinfo(
+                        "Cancelled", "Operation was cancelled by user")
+                    self.progress_details.config(
+                        text="Operation cancelled by user")
+                    self.status_label.config(text="Operation cancelled")
+                    self.cancel_button.config(state=tk.DISABLED)
+
                 elif message_type == "complete":
                     if self.is_scanning:
                         self.is_scanning = False
                         self.progress_bar.stop()
-                        self.status_label.config(
-                            text=f"Completed scanning {len(self.scanned_files)} files")
+                        if self.cancel_requested:
+                            self.status_label.config(text="Scanning cancelled")
+                        else:
+                            self.status_label.config(
+                                text=f"Completed scanning {len(self.scanned_files)} files")
                     elif self.is_organizing:
                         self.is_organizing = False
                         self.progress_bar.stop()
-                        self.status_label.config(text="Organization complete")
-                        self.progress_details.config(
-                            text="All files have been organized")
+                        if self.cancel_requested:
+                            self.status_label.config(
+                                text="Organization cancelled")
+                        else:
+                            self.status_label.config(
+                                text="Organization complete")
+                            self.progress_details.config(
+                                text="All files have been organized")
                     else:
                         # For report generation and other tasks
                         self.progress_bar.stop()
                         self.status_label.config(text="Task completed")
+
+                    # Disable cancel button when operation is complete
+                    self.cancel_button.config(state=tk.DISABLED)
+                    self.cancel_requested = False
 
                 self.status_queue.task_done()
 
@@ -669,6 +711,7 @@ class DocumentOrganizerApp:
 
         # Start organizing files
         self.is_organizing = True
+        self.cancel_requested = False
 
         # Reset progress indicators
         self.progress_bar.config(mode='indeterminate')
@@ -678,6 +721,9 @@ class DocumentOrganizerApp:
         self.processed_label.config(text=f"Files: {len(self.scanned_files)}")
         self.total_label.config(text="Copying: 0")
         self.batch_status_label.config(text="")
+
+        # Enable cancel button
+        self.cancel_button.config(state=tk.NORMAL)
 
         # Save organization rules to settings
         self.save_organization_rules()
@@ -893,317 +939,145 @@ class DocumentOrganizerApp:
             self.status_queue.put(("complete", None))
 
     def _create_settings_widgets(self):
-        """Create settings tab widgets"""
-        # Settings frame
-        settings_frame = ttk.Frame(self.settings_tab)
-        settings_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        """Create widgets for the settings tab"""
+        # Create a notebook for settings categories
+        self.settings_notebook = ttk.Notebook(self.settings_tab)
 
-        # Create a notebook for settings tabs
-        settings_notebook = ttk.Notebook(settings_frame)
-        settings_notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        # General settings tab
+        self.general_settings_tab = ttk.Frame(
+            self.settings_notebook, padding=10)
+        self.settings_notebook.add(
+            self.general_settings_tab, text="General Settings")
 
-        # Processing tab
-        processing_tab = ttk.Frame(settings_notebook)
-        settings_notebook.add(processing_tab, text="Processing")
+        # Directory settings
+        self.dir_settings_frame = ttk.LabelFrame(
+            self.general_settings_tab, text="Directory Settings", padding=10)
 
-        # AI Models tab
-        ai_models_tab = ttk.Frame(settings_notebook)
-        settings_notebook.add(ai_models_tab, text="AI Models")
+        # Source directory
+        self.source_settings_label = ttk.Label(
+            self.dir_settings_frame, text="Default Source Directory:")
+        self.source_settings_entry = ttk.Entry(
+            self.dir_settings_frame, textvariable=self.source_dir, width=40)
+        self.source_settings_button = ttk.Button(
+            self.dir_settings_frame, text="Browse...",
+            command=lambda: self.browse_source(save=True))
 
-        # Organization tab
-        organization_tab = ttk.Frame(settings_notebook)
-        settings_notebook.add(organization_tab, text="Organization")
+        # Target directory
+        self.target_settings_label = ttk.Label(
+            self.dir_settings_frame, text="Default Target Directory:")
+        self.target_settings_entry = ttk.Entry(
+            self.dir_settings_frame, textvariable=self.target_dir, width=40)
+        self.target_settings_button = ttk.Button(
+            self.dir_settings_frame, text="Browse...",
+            command=lambda: self.browse_target(save=True))
 
-        # ===== Processing Settings =====
         # Batch processing settings
-        batch_frame = ttk.LabelFrame(
-            processing_tab, text="Batch Processing Settings")
-        batch_frame.pack(fill=tk.X, padx=5, pady=5)
+        self.batch_settings_frame = ttk.LabelFrame(
+            self.general_settings_tab, text="Batch Processing", padding=10)
 
-        # Batch size setting
-        batch_size_frame = ttk.Frame(batch_frame)
-        batch_size_frame.pack(fill=tk.X, padx=5, pady=5)
+        # Batch size
+        self.batch_size_label = ttk.Label(
+            self.batch_settings_frame, text="Batch Size:")
+        self.batch_size_entry = ttk.Entry(
+            self.batch_settings_frame, textvariable=self.batch_size, width=5)
+        self.batch_size_button = ttk.Button(
+            self.batch_settings_frame, text="Save",
+            command=self.save_batch_size)
+        self.batch_size_info = ttk.Label(
+            self.batch_settings_frame,
+            text="Number of files to process in each batch (5-20 recommended)")
 
-        ttk.Label(batch_size_frame, text="Batch Size:").pack(
-            side=tk.LEFT, padx=5)
-        batch_size_entry = ttk.Entry(
-            batch_size_frame, textvariable=self.batch_size, width=5)
-        batch_size_entry.pack(side=tk.LEFT, padx=5)
-        ttk.Label(batch_size_frame, text="files per batch").pack(
-            side=tk.LEFT, padx=5)
+        # Batch delay
+        self.batch_delay_label = ttk.Label(
+            self.batch_settings_frame, text="Batch Delay (seconds):")
+        self.batch_delay_entry = ttk.Entry(
+            self.batch_settings_frame, textvariable=self.batch_delay, width=5)
+        self.batch_delay_button = ttk.Button(
+            self.batch_settings_frame, text="Save",
+            command=self.save_batch_delay)
+        self.batch_delay_info = ttk.Label(
+            self.batch_settings_frame,
+            text="Delay between batches to avoid rate limiting (5-30 recommended)")
 
-        ttk.Button(batch_size_frame, text="Save",
-                   command=self.save_batch_size).pack(side=tk.RIGHT, padx=5)
+        # Logging settings
+        self.logging_settings_frame = ttk.LabelFrame(
+            self.general_settings_tab, text="Logging Settings", padding=10)
 
-        # Batch delay setting
-        batch_delay_frame = ttk.Frame(batch_frame)
-        batch_delay_frame.pack(fill=tk.X, padx=5, pady=5)
+        # Log to file only checkbox
+        self.log_to_file_only_check = ttk.Checkbutton(
+            self.logging_settings_frame,
+            text="Log to file only (no console output)",
+            variable=self.log_to_file_only,
+            command=self.save_logging_settings)
 
-        ttk.Label(batch_delay_frame, text="Batch Delay:").pack(
-            side=tk.LEFT, padx=5)
-        batch_delay_entry = ttk.Entry(
-            batch_delay_frame, textvariable=self.batch_delay, width=5)
-        batch_delay_entry.pack(side=tk.LEFT, padx=5)
-        ttk.Label(batch_delay_frame, text="seconds between batches").pack(
-            side=tk.LEFT, padx=5)
+        self.logging_info = ttk.Label(
+            self.logging_settings_frame,
+            text="Note: This setting will take effect on next application restart")
 
-        ttk.Button(batch_delay_frame, text="Save",
-                   command=self.save_batch_delay).pack(side=tk.RIGHT, padx=5)
+        # Theme settings
+        self.theme_settings_frame = ttk.LabelFrame(
+            self.general_settings_tab, text="Theme Settings", padding=10)
 
-        # Rate limit info
-        rate_limit_frame = ttk.Frame(batch_frame)
-        rate_limit_frame.pack(fill=tk.X, padx=5, pady=5)
+        # Theme selection
+        self.theme_label = ttk.Label(self.theme_settings_frame, text="Theme:")
+        self.theme_combo = ttk.Combobox(
+            self.theme_settings_frame, textvariable=self.theme_var)
 
-        ttk.Label(rate_limit_frame, text="Note: Lower batch size and higher delay helps avoid API rate limits").pack(
-            anchor=tk.W, padx=5, pady=5)
+        # Get available themes
+        self.theme_combo['values'] = self.style.theme_names()
+        self.theme_combo.bind("<<ComboboxSelected>>",
+                              lambda e: self.apply_theme())
 
-        # ===== AI Models Settings =====
-        # Service selection
-        self.service_type = tk.StringVar(
-            value=self.settings_manager.get_setting("ai_service.service_type", "google"))
+        # Organization settings tab
+        self.organization_settings_tab = ttk.Frame(
+            self.settings_notebook, padding=10)
+        self.settings_notebook.add(
+            self.organization_settings_tab, text="Organization Settings")
 
-        service_frame = ttk.LabelFrame(
-            ai_models_tab, text="AI Service Selection")
-        service_frame.pack(fill=tk.X, padx=5, pady=5)
+        # Organization rules frame
+        self.organization_rules_frame = ttk.LabelFrame(
+            self.organization_settings_tab, text="Organization Rules", padding=10)
 
-        service_selection_frame = ttk.Frame(service_frame)
-        service_selection_frame.pack(fill=tk.X, padx=5, pady=5)
+        # Create category folders
+        self.create_folders_check = ttk.Checkbutton(
+            self.organization_rules_frame,
+            text="Create category folders",
+            variable=self.create_category_folders,
+            command=self.save_organization_rules)
 
-        ttk.Label(service_selection_frame, text="AI Service:").pack(
-            side=tk.LEFT, padx=5)
+        # Generate summaries
+        self.generate_summaries_check = ttk.Checkbutton(
+            self.organization_rules_frame,
+            text="Generate content summaries",
+            variable=self.generate_summaries,
+            command=self.save_organization_rules)
 
-        # Get available services
-        from src.ai_service_factory import AIServiceFactory
-        available_services = AIServiceFactory.get_available_services()
+        # Include metadata
+        self.include_metadata_check = ttk.Checkbutton(
+            self.organization_rules_frame,
+            text="Include metadata files",
+            variable=self.include_metadata,
+            command=self.save_organization_rules)
 
-        service_combobox = ttk.Combobox(service_selection_frame, textvariable=self.service_type,
-                                        values=available_services, width=10, state="readonly")
-        service_combobox.pack(side=tk.LEFT, padx=5)
+        # Copy instead of move
+        self.copy_instead_check = ttk.Checkbutton(
+            self.organization_rules_frame,
+            text="Copy files instead of moving them",
+            variable=self.copy_instead_of_move,
+            command=self.save_organization_rules)
 
-        ttk.Button(service_selection_frame, text="Set as Default",
-                   command=self.save_service_type).pack(side=tk.RIGHT, padx=5)
-
-        # API Keys frame
-        api_keys_frame = ttk.LabelFrame(ai_models_tab, text="API Keys")
-        api_keys_frame.pack(fill=tk.X, padx=5, pady=5)
-
-        # Google API Key
-        google_key_frame = ttk.Frame(api_keys_frame)
-        google_key_frame.pack(fill=tk.X, padx=5, pady=5)
-
-        ttk.Label(google_key_frame, text="Google API Key:").pack(
-            side=tk.LEFT, padx=5)
-
-        # Get current key from settings or environment
-        google_api_key = self.settings_manager.get_api_key("google")
-        self.google_api_key = tk.StringVar(value=google_api_key)
-
-        google_key_entry = ttk.Entry(
-            google_key_frame, textvariable=self.google_api_key, width=40, show="*")
-        google_key_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
-
-        ttk.Button(google_key_frame, text="Save",
-                   command=lambda: self.save_api_key("google")).pack(side=tk.RIGHT, padx=5)
-
-        # OpenAI API Key
-        openai_key_frame = ttk.Frame(api_keys_frame)
-        openai_key_frame.pack(fill=tk.X, padx=5, pady=5)
-
-        ttk.Label(openai_key_frame, text="OpenAI API Key:").pack(
-            side=tk.LEFT, padx=5)
-
-        # Get current key from settings or environment
-        openai_api_key = self.settings_manager.get_api_key("openai")
-        self.openai_api_key = tk.StringVar(value=openai_api_key)
-
-        openai_key_entry = ttk.Entry(
-            openai_key_frame, textvariable=self.openai_api_key, width=40, show="*")
-        openai_key_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
-
-        ttk.Button(openai_key_frame, text="Save",
-                   command=lambda: self.save_api_key("openai")).pack(side=tk.RIGHT, padx=5)
-
-        # Model selection frame
-        model_frame = ttk.LabelFrame(ai_models_tab, text="Model Selection")
-        model_frame.pack(fill=tk.X, padx=5, pady=5)
-
-        # Create analyzers to get available models
-        self.google_analyzer = AIAnalyzer(self.settings_manager)
-        self.openai_analyzer = OpenAIAnalyzer(self.settings_manager)
-
-        # Google model selection
-        google_model_frame = ttk.Frame(model_frame)
-        google_model_frame.pack(fill=tk.X, padx=5, pady=5)
-
-        ttk.Label(google_model_frame, text="Google Gemini Model:").pack(
-            side=tk.LEFT, padx=5)
-
-        # Get available Google models
-        google_models = self.google_analyzer.get_available_models()
-
-        # Get current selected model
-        selected_google_model = self.settings_manager.get_selected_model(
-            "google")
-        self.google_model = tk.StringVar(value=selected_google_model)
-
-        self.google_model_combobox = ttk.Combobox(google_model_frame, textvariable=self.google_model,
-                                                  values=google_models, width=30, state="readonly")
-        self.google_model_combobox.pack(
-            side=tk.LEFT, padx=5, fill=tk.X, expand=True)
-
-        ttk.Button(google_model_frame, text="Set",
-                   command=lambda: self.set_model("google")).pack(side=tk.RIGHT, padx=5)
-
-        # OpenAI model selection
-        openai_model_frame = ttk.Frame(model_frame)
-        openai_model_frame.pack(fill=tk.X, padx=5, pady=5)
-
-        ttk.Label(openai_model_frame, text="OpenAI Model:").pack(
-            side=tk.LEFT, padx=5)
-
-        # Get available OpenAI models
-        openai_models = self.openai_analyzer.get_available_models()
-
-        # Get current selected model
-        selected_openai_model = self.settings_manager.get_selected_model(
-            "openai")
-        self.openai_model = tk.StringVar(value=selected_openai_model)
-
-        self.openai_model_combobox = ttk.Combobox(openai_model_frame, textvariable=self.openai_model,
-                                                  values=openai_models, width=30, state="readonly")
-        self.openai_model_combobox.pack(
-            side=tk.LEFT, padx=5, fill=tk.X, expand=True)
-
-        ttk.Button(openai_model_frame, text="Set",
-                   command=lambda: self.set_model("openai")).pack(side=tk.RIGHT, padx=5)
-
-        # ===== Organization Rules =====
-        # Organization rules
-        org_frame = ttk.LabelFrame(organization_tab, text="Organization Rules")
-        org_frame.pack(fill=tk.X, padx=5, pady=5)
-
-        # Create checkboxes for organization rules
-        ttk.Checkbutton(org_frame, text="Create category folders",
-                        variable=self.create_category_folders,
-                        command=self.save_organization_rules).grid(row=0, column=0, sticky='w', padx=5, pady=5)
-
-        ttk.Checkbutton(org_frame, text="Generate content summaries",
-                        variable=self.generate_summaries,
-                        command=self.save_organization_rules).grid(row=1, column=0, sticky='w', padx=5, pady=5)
-
-        ttk.Checkbutton(org_frame, text="Include metadata in separate files",
-                        variable=self.include_metadata,
-                        command=self.save_organization_rules).grid(row=2, column=0, sticky='w', padx=5, pady=5)
-
-        ttk.Checkbutton(org_frame, text="Copy files instead of moving them",
-                        variable=self.copy_instead_of_move,
-                        command=self.save_organization_rules).grid(row=3, column=0, sticky='w', padx=5, pady=5)
-
-        # Help section explaining the rules
-        rules_help_frame = ttk.Frame(org_frame)
-        rules_help_text = ScrolledText(
-            rules_help_frame, wrap=tk.WORD, width=40, height=5)
-        rules_help_text.insert(tk.END, "Organization Rules Help:\n\n")
-        rules_help_text.insert(
-            tk.END, "- Create category folders: Create a folder structure based on AI-detected categories\n")
-        rules_help_text.insert(
-            tk.END, "- Generate summaries: Create summary files with AI-generated content descriptions\n")
-        rules_help_text.insert(
-            tk.END, "- Include metadata: Save detailed AI analysis alongside each file\n")
-        rules_help_text.insert(
-            tk.END, "- Copy files: Keep original files intact (vs. moving them)\n")
-        rules_help_text.config(state=tk.DISABLED)
-        rules_help_frame.grid(row=0, column=1, rowspan=4,
-                              sticky='nsew', padx=5, pady=5)
-        rules_help_text.pack(fill='both', expand=True)
-
-        # About tab
-        self.about_frame = ttk.LabelFrame(
-            self.about_tab, text="About AI Document Organizer", padding=(10, 5))
-        self.about_frame.pack(fill='both', expand=True, padx=10, pady=10)
-
-        # App info
-        app_info = ScrolledText(
-            self.about_frame, wrap=tk.WORD, width=60, height=10)
-        app_info.insert(tk.END, "AI Document Organizer\n\n")
-        app_info.insert(tk.END, "Version 1.0\n\n")
-        app_info.insert(
-            tk.END, "This application uses Google Gemini Flash 2.0 AI to analyze and organize documents.\n\n")
-        app_info.insert(tk.END, "Supported file types:\n")
-        app_info.insert(tk.END, "- CSV files (.csv)\n")
-        app_info.insert(tk.END, "- Excel spreadsheets (.xlsx)\n")
-        app_info.insert(tk.END, "- HTML documents (.html)\n")
-        app_info.insert(tk.END, "- Markdown documents (.md)\n")
-        app_info.insert(tk.END, "- Text files (.txt)\n")
-        app_info.insert(tk.END, "- Word documents (.docx)\n\n")
-        app_info.config(state=tk.DISABLED)
-        app_info.pack(fill='both', expand=True, padx=5, pady=5)
-
-    def save_service_type(self):
-        """Save the selected AI service type"""
+    def save_logging_settings(self):
+        """Save logging settings to the settings manager"""
         try:
-            service_type = self.service_type.get()
-            if self.settings_manager.set_setting("ai_service.service_type", service_type):
-                messagebox.showinfo(
-                    "Settings Saved", f"AI service set to {service_type}")
-                logger.info(f"AI service set to {service_type}")
-            else:
-                messagebox.showwarning(
-                    "Warning", "Could not save AI service setting")
+            log_to_file_only = self.log_to_file_only.get()
+            self.settings_manager.set_setting(
+                "log_to_file_only", log_to_file_only)
+            self.settings_manager.save_settings()
+            logger.info(f"Saved log_to_file_only setting: {log_to_file_only}")
         except Exception as e:
-            logger.error(f"Error saving AI service type: {str(e)}")
+            logger.error(f"Error saving logging settings: {str(e)}")
             messagebox.showerror(
-                "Error", f"Could not save AI service type: {str(e)}")
-
-    def save_api_key(self, service_type):
-        """Save API key for the specified service"""
-        try:
-            if service_type.lower() == "google":
-                api_key = self.google_api_key.get()
-                if self.settings_manager.set_api_key("google", api_key):
-                    messagebox.showinfo(
-                        "API Key Saved", "Google API key saved successfully")
-                    logger.info("Google API key saved")
-                else:
-                    messagebox.showwarning(
-                        "Warning", "Could not save Google API key")
-            elif service_type.lower() == "openai":
-                api_key = self.openai_api_key.get()
-                if self.settings_manager.set_api_key("openai", api_key):
-                    messagebox.showinfo(
-                        "API Key Saved", "OpenAI API key saved successfully")
-                    logger.info("OpenAI API key saved")
-                else:
-                    messagebox.showwarning(
-                        "Warning", "Could not save OpenAI API key")
-        except Exception as e:
-            logger.error(f"Error saving API key: {str(e)}")
-            messagebox.showerror("Error", f"Could not save API key: {str(e)}")
-
-    def set_model(self, service_type):
-        """Set the selected model for the specified service"""
-        try:
-            if service_type.lower() == "google":
-                model_name = self.google_model.get()
-                if self.google_analyzer.set_model(model_name):
-                    messagebox.showinfo(
-                        "Model Set", f"Google model set to {model_name}")
-                    logger.info(f"Google model set to {model_name}")
-                else:
-                    messagebox.showwarning(
-                        "Warning", f"Could not set Google model to {model_name}")
-            elif service_type.lower() == "openai":
-                model_name = self.openai_model.get()
-                if self.openai_analyzer.set_model(model_name):
-                    messagebox.showinfo(
-                        "Model Set", f"OpenAI model set to {model_name}")
-                    logger.info(f"OpenAI model set to {model_name}")
-                else:
-                    messagebox.showwarning(
-                        "Warning", f"Could not set OpenAI model to {model_name}")
-        except Exception as e:
-            logger.error(f"Error setting model: {str(e)}")
-            messagebox.showerror("Error", f"Could not set model: {str(e)}")
+                "Error", f"Could not save logging settings: {str(e)}")
 
     def organize_files_thread(self, files, target_dir):
         """Thread function to organize files"""
@@ -1220,6 +1094,9 @@ class DocumentOrganizerApp:
                 # Update organization-specific labels
                 self.status_queue.put(
                     ("status", f"Organizing files ({percentage}%)"))
+
+                # Check for cancellation
+                return not self.cancel_requested
 
             # Get organization rules from the settings
             organization_options = {
@@ -1240,23 +1117,11 @@ class DocumentOrganizerApp:
                 options=organization_options
             )
 
-            # Update with final results
-            self.status_queue.put(
-                ("status", f"Organized {result['success']} files. {result['failed']} failed."))
-
-            if result['failed'] > 0:
-                failed_files = ", ".join(result['failed_files'][:5])
-                if len(result['failed_files']) > 5:
-                    failed_files += "..."
-                self.status_queue.put(
-                    ("error", f"Failed to organize some files: {failed_files}"))
+            if self.cancel_requested:
+                self.status_queue.put(("cancelled", None))
             else:
-                self.status_queue.put(("progress", {
-                    "processed": len(files),
-                    "total": len(files),
-                    "status": "Organization complete!",
-                    "percentage": 100
-                }))
+                self.status_queue.put(
+                    ("success", f"Successfully organized {result.get('organized_count', 0)} files"))
 
                 # Show summary of the organization
                 summary = f"Successfully organized {result['success']} files into {target_dir}\n\n"
@@ -1286,3 +1151,16 @@ class DocumentOrganizerApp:
         finally:
             self.is_organizing = False
             self.status_queue.put(("complete", None))
+
+    def cancel_operation(self):
+        """Cancel the current operation (scanning or organizing)"""
+        if not self.is_scanning and not self.is_organizing:
+            return
+
+        self.cancel_requested = True
+        self.status_queue.put(("status", "Cancelling operation..."))
+        self.progress_details.config(text="Cancelling... Please wait")
+        logger.info("User requested cancellation of current operation")
+
+        # Disable the cancel button while cancellation is in progress
+        self.cancel_button.config(state=tk.DISABLED)

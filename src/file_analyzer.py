@@ -49,101 +49,123 @@ class FileAnalyzer:
             callback: Function to call with progress updates
 
         Returns:
-            List of dictionaries containing file information and analysis
+            List of dictionaries with file information
         """
-        if batch_size is not None:
-            self.batch_size = batch_size
+        # Use provided values or defaults
+        self.batch_size = batch_size or self.batch_size
+        self.batch_delay = batch_delay or self.batch_delay
+        self.progress_callback = callback
 
-        if batch_delay is not None:
-            self.batch_delay = batch_delay
+        logger.info(
+            f"Starting directory scan of {directory_path} with batch_size={self.batch_size}, batch_delay={self.batch_delay}")
 
-        if callback is not None:
-            self.progress_callback = callback
+        # Get all files in the directory and subdirectories
+        all_files = []
+        total_files = 0
+        processed_files = 0
+        cancelled = False
 
-        # Find all valid files first
-        valid_files = []
-        for root, dirs, files in os.walk(directory_path):
-            for filename in files:
-                file_path = os.path.join(root, filename)
-                file_ext = os.path.splitext(filename)[1].lower()
+        # Walk through the directory
+        for root, _, files in os.walk(directory_path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                file_ext = os.path.splitext(file_path)[1].lower()
 
+                # Only include supported file types
                 if file_ext in self.supported_extensions:
-                    valid_files.append((file_path, file_ext))
+                    all_files.append((file_path, file_ext))
+                    total_files += 1
 
-        # Notify of total files to process
-        total_files = len(valid_files)
-        logger.info(f"Found {total_files} files to process")
+        logger.info(f"Found {total_files} supported files to process")
 
-        if self.progress_callback:
-            self.progress_callback(0, total_files, "Starting batch processing")
-
-        # Process files in batches using thread pool for I/O bound operations
+        # Process files in batches
         results = []
-        processed_count = 0
+        batches = [all_files[i:i + self.batch_size]
+                   for i in range(0, len(all_files), self.batch_size)]
 
-        for i in range(0, len(valid_files), self.batch_size):
-            batch = valid_files[i:i + self.batch_size]
-
-            # Process the current batch
-            batch_results = self._process_batch(batch)
-            results.extend(batch_results)
-
-            processed_count += len(batch)
+        for batch_index, batch in enumerate(batches):
+            # Check if we should continue or if cancellation was requested
             if self.progress_callback:
-                self.progress_callback(
-                    processed_count,
-                    total_files,
-                    f"Processed batch {i//self.batch_size + 1}/{(total_files+self.batch_size-1)//self.batch_size}"
-                )
+                status_message = f"Processing batch {batch_index + 1}/{len(batches)}"
+                should_continue = self.progress_callback(
+                    processed_files, total_files, status_message)
+                if should_continue is False:
+                    logger.info("Scan cancelled by user")
+                    cancelled = True
+                    break
 
             logger.info(
-                f"Completed batch {i//self.batch_size + 1}, processed {processed_count}/{total_files} files")
+                f"Processing batch {batch_index + 1}/{len(batches)} ({len(batch)} files)")
 
-            # Add delay between batches to avoid rate limiting
-            # If there are more batches to process
-            if i + self.batch_size < len(valid_files):
+            # Process the batch
+            batch_results = self._process_batch(batch)
+            results.extend(batch_results)
+            processed_files += len(batch)
+
+            # Update progress
+            if self.progress_callback:
+                status_message = f"Completed batch {batch_index + 1}/{len(batches)}"
+                should_continue = self.progress_callback(
+                    processed_files, total_files, status_message)
+                if should_continue is False:
+                    logger.info("Scan cancelled by user")
+                    cancelled = True
+                    break
+
+            # Delay between batches (except for the last batch)
+            if batch_index < len(batches) - 1 and not cancelled:
                 logger.info(
-                    f"Waiting {self.batch_delay} seconds before processing next batch...")
-                if self.progress_callback:
-                    self.progress_callback(
-                        processed_count,
-                        total_files,
-                        f"Waiting {self.batch_delay} seconds before next batch..."
-                    )
+                    f"Waiting {self.batch_delay} seconds before next batch")
                 time.sleep(self.batch_delay)
 
+        logger.info(
+            f"Scan completed. Processed {len(results)}/{total_files} files")
         return results
 
     def _process_batch(self, file_batch):
-        """Process a batch of files in parallel
+        """
+        Process a batch of files using a thread pool
 
         Args:
-            file_batch: List of (file_path, file_ext) tuples
+            file_batch: List of (file_path, file_ext) tuples to process
 
         Returns:
-            List of processed file information dictionaries
+            List of file information dictionaries
         """
-        batch_results = []
+        results = []
+        cancelled = False
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            # Submit all file processing tasks
+            # Submit all files for processing
             future_to_file = {
                 executor.submit(self._process_single_file, file_path, file_ext): (file_path, file_ext)
                 for file_path, file_ext in file_batch
             }
 
             # Process results as they complete
-            for future in as_completed(future_to_file):
+            for i, future in enumerate(as_completed(future_to_file)):
+                file_path, file_ext = future_to_file[future]
                 try:
-                    result = future.result()
-                    if result:  # Filter out None results from failed processing
-                        batch_results.append(result)
+                    file_info = future.result()
+                    if file_info:
+                        results.append(file_info)
+
+                    # Update progress after each file
+                    if self.progress_callback:
+                        status_message = f"Processed: {os.path.basename(file_path)}"
+                        should_continue = self.progress_callback(
+                            i + 1, len(file_batch), status_message)
+                        if should_continue is False:
+                            logger.info("Batch processing cancelled by user")
+                            cancelled = True
+                            break
+
                 except Exception as e:
-                    file_path, _ = future_to_file[future]
                     logger.error(
                         f"Error processing file {file_path}: {str(e)}")
+                    logger.error(traceback.format_exc())
 
-        return batch_results
+        return results
 
     def _process_single_file(self, file_path, file_ext):
         """Process a single file

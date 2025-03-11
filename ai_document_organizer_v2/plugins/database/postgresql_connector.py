@@ -298,29 +298,41 @@ class PostgreSQLConnectorPlugin(DatabaseConnectorPlugin):
             if self._cursor.description:
                 result["column_names"] = [col.name for col in self._cursor.description]
             
-            # Fetch results if there are any
-            if query.strip().upper().startswith(("SELECT", "RETURNING", "SHOW", "WITH", "EXPLAIN", "ANALYZE")):
-                rows = self._cursor.fetchall()
-                
-                # Convert rows to list of dicts
-                if isinstance(rows[0], dict) if rows else False:
-                    # Already a dict (RealDictCursor)
-                    result["rows"] = rows
-                else:
-                    # Convert to dict
-                    column_names = result["column_names"]
-                    result["rows"] = [dict(zip(column_names, row)) for row in rows]
+            # Check if query contains RETURNING clause
+            has_returning = "RETURNING" in query.upper()
+            
+            # For queries that return rows (SELECT, INSERT...RETURNING, etc.)
+            if query.strip().upper().startswith(("SELECT", "SHOW", "WITH", "EXPLAIN", "ANALYZE")) or has_returning:
+                try:
+                    # Fetch all rows
+                    rows = self._cursor.fetchall()
                     
-                result["row_count"] = len(result["rows"])
+                    # Convert rows to list of dicts
+                    if rows:
+                        if isinstance(rows[0], dict):
+                            # Already a dict (RealDictCursor)
+                            result["rows"] = rows
+                        else:
+                            # Convert to dict
+                            column_names = result["column_names"]
+                            result["rows"] = [dict(zip(column_names, row)) for row in rows]
+                        
+                        # For INSERT...RETURNING, set the last_row_id
+                        if query.strip().upper().startswith("INSERT") and has_returning and rows:
+                            if 'id' in result["rows"][0]:
+                                result["last_row_id"] = result["rows"][0]['id']
+                    else:
+                        # No rows returned
+                        result["rows"] = []
+                        
+                    result["row_count"] = len(result["rows"])
+                except Exception as e:
+                    logger.error(f"Error fetching query results: {e}")
+                    result["rows"] = []
+                    result["row_count"] = 0
             else:
-                # For non-SELECT queries
+                # For non-returning queries
                 result["affected_rows"] = self._cursor.rowcount
-                
-                # Try to get last inserted ID for INSERT operations with RETURNING
-                if query.strip().upper().startswith("INSERT") and "RETURNING" in query.upper():
-                    last_id_result = self._cursor.fetchone()
-                    if last_id_result and len(last_id_result) > 0:
-                        result["last_row_id"] = last_id_result[0]
             
             result["success"] = True
         except Exception as e:
@@ -355,15 +367,43 @@ class PostgreSQLConnectorPlugin(DatabaseConnectorPlugin):
         
         results = []
         
-        # Use transaction for batch execution
-        with self.transaction():
-            for i, query in enumerate(queries):
-                params = None
-                if params_list and i < len(params_list):
-                    params = params_list[i]
+        try:
+            # Use transaction for batch execution
+            with self.transaction():
+                for i, query in enumerate(queries):
+                    params = None
+                    if params_list and i < len(params_list):
+                        params = params_list[i]
+                    
+                    # Check if the query contains RETURNING clause
+                    has_returning = "RETURNING" in query.upper()
+                    
+                    try:
+                        result = self.execute_query(query, params)
+                        results.append(result)
+                        
+                        # For INSERT with RETURNING, make sure we have the ID in the results
+                        if query.strip().upper().startswith("INSERT") and has_returning and result.get('rows'):
+                            logger.debug(f"Batch operation {i} returned ID: {result['rows'][0].get('id')}")
+                    except Exception as e:
+                        logger.error(f"Error executing batch query {i}: {e}")
+                        logger.debug(f"Query: {query}")
+                        logger.debug(f"Params: {params}")
+                        # Add a failed result and continue
+                        results.append({
+                            "success": False,
+                            "rows": [],
+                            "row_count": 0,
+                            "column_names": [],
+                            "execution_time": 0,
+                            "last_row_id": None,
+                            "affected_rows": 0,
+                            "error": str(e)
+                        })
                 
-                result = self.execute_query(query, params)
-                results.append(result)
+        except Exception as e:
+            logger.error(f"Batch execution failed: {e}")
+            raise QueryError(f"Batch execution failed: {e}")
                 
         return results
     

@@ -38,7 +38,13 @@ class SettingsManager:
                 "create_category_folders": True,
                 "generate_summaries": True,
                 "include_metadata": True,
-                "copy_instead_of_move": True
+                "copy_instead_of_move": True,
+                "use_custom_rules": False,
+                "rules_file": "",
+                "detect_duplicates": False,
+                "duplicate_action": "report",  # 'report', 'move', 'delete', 'keep_newest'
+                "apply_tags": False,
+                "suggest_tags": False
             },
             "ai_service": {
                 "service_type": "google",  # 'google' or 'openai'
@@ -48,10 +54,49 @@ class SettingsManager:
                 "openai_model": "gpt-4-turbo-preview",      # Default OpenAI model
                 "requests_per_minute": 30,   # Default API rate limit
                 "max_retries": 5            # Maximum number of retries for rate limit errors
+            },
+            "batch_processing": {
+                "use_process_pool": True,     # Use process pool instead of thread pool
+                "adaptive_workers": True,     # Adapt worker count based on system resources
+                "max_workers": 4,             # Maximum number of workers
+                "memory_limit_percent": 80,   # Memory usage limit percentage
+                "enable_pause_resume": True,  # Enable pause/resume functionality
+                "save_job_state": True        # Save job state for resuming later
+            },
+            "image_analysis": {
+                "enabled": True,                  # Enable image analysis
+                "extract_exif": True,             # Extract EXIF metadata
+                "generate_thumbnails": True,      # Generate thumbnails
+                # Thumbnail size [width, height]
+                "thumbnail_size": [200, 200],
+                "vision_api_enabled": False,      # Enable vision API integration
+                "vision_api_provider": "google",  # 'google' or 'azure'
+                # Vision API key (stored encrypted)
+                "vision_api_key": "",
+                "detect_objects": True,           # Detect objects in images
+                # Detect faces in images (privacy concern)
+                "detect_faces": False,
+                # Extract text from images (OCR)
+                "extract_text": True,
+                "content_moderation": False       # Enable content moderation
+            },
+            "document_summarization": {
+                "summary_length": "medium",       # 'short', 'medium', 'long'
+                "extract_key_points": True,       # Extract key points
+                "extract_action_items": True,     # Extract action items
+                "generate_executive_summary": False,  # Generate executive summary
+                "summary_file_format": "md"       # 'txt', 'md', 'html'
+            },
+            "advanced": {
+                "debug_mode": False,
+                "log_level": "INFO",
+                "max_file_size_mb": 50,           # Maximum file size to process in MB
+                "excluded_directories": ["node_modules", ".git", "__pycache__"],
+                "excluded_file_patterns": ["~$*", "Thumbs.db", ".DS_Store"]
             }
         }
 
-        # Load settings
+        # Load settings from file or use defaults
         self.settings = self.load_settings()
 
     def get_api_key(self, service_type):
@@ -59,107 +104,121 @@ class SettingsManager:
         Get API key for the specified service
 
         Args:
-            service_type: 'google' or 'openai'
+            service_type: Service type ('google' or 'openai')
 
         Returns:
             API key string or empty string if not set
         """
-        # First check environment variables
-        if service_type.lower() == 'google':
-            key = os.environ.get("GOOGLE_API_KEY", "")
-            if not key:
-                # If not in environment, check settings
-                key = self.get_setting("ai_service.google_api_key", "")
-            return key
-        elif service_type.lower() == 'openai':
-            key = os.environ.get("OPENAI_API_KEY", "")
-            if not key:
-                # If not in environment, check settings
-                key = self.get_setting("ai_service.openai_api_key", "")
-            return key
-        return ""
+        if service_type == "google":
+            return self.settings["ai_service"]["google_api_key"]
+        elif service_type == "openai":
+            return self.settings["ai_service"]["openai_api_key"]
+        elif service_type == "vision":
+            return self.settings["image_analysis"]["vision_api_key"]
+        else:
+            return ""
 
     def set_api_key(self, service_type, api_key):
         """
         Set API key for the specified service
 
         Args:
-            service_type: 'google' or 'openai'
-            api_key: API key string
+            service_type: Service type ('google', 'openai', or 'vision')
+            api_key: API key to set
 
         Returns:
             True if successful, False otherwise
         """
-        if service_type.lower() == 'google':
-            # Set in environment for current session
-            os.environ["GOOGLE_API_KEY"] = api_key
-            # Save in settings for future sessions
-            return self.set_setting("ai_service.google_api_key", api_key)
-        elif service_type.lower() == 'openai':
-            # Set in environment for current session
-            os.environ["OPENAI_API_KEY"] = api_key
-            # Save in settings for future sessions
-            return self.set_setting("ai_service.openai_api_key", api_key)
-        return False
+        try:
+            if service_type == "google":
+                self.settings["ai_service"]["google_api_key"] = api_key
+            elif service_type == "openai":
+                self.settings["ai_service"]["openai_api_key"] = api_key
+            elif service_type == "vision":
+                self.settings["image_analysis"]["vision_api_key"] = api_key
+            else:
+                return False
+
+            self.save_settings()
+            return True
+        except Exception as e:
+            logger.error(f"Error setting API key: {str(e)}")
+            return False
 
     def get_selected_model(self, service_type):
         """
-        Get the selected model for the specified service
+        Get selected model for the specified service
 
         Args:
-            service_type: 'google' or 'openai'
+            service_type: Service type ('google' or 'openai')
 
         Returns:
             Model name string
         """
-        if service_type.lower() == 'google':
-            return self.get_setting("ai_service.google_model", "models/gemini-2.0-flash")
-        elif service_type.lower() == 'openai':
-            return self.get_setting("ai_service.openai_model", "gpt-4-turbo-preview")
-        return ""
+        if service_type == "google":
+            return self.settings["ai_service"]["google_model"]
+        elif service_type == "openai":
+            return self.settings["ai_service"]["openai_model"]
+        else:
+            return ""
 
     def set_selected_model(self, service_type, model_name):
         """
-        Set the selected model for the specified service
+        Set selected model for the specified service
 
         Args:
-            service_type: 'google' or 'openai'
-            model_name: Model name string
+            service_type: Service type ('google' or 'openai')
+            model_name: Model name to set
 
         Returns:
             True if successful, False otherwise
         """
-        if service_type.lower() == 'google':
-            return self.set_setting("ai_service.google_model", model_name)
-        elif service_type.lower() == 'openai':
-            return self.set_setting("ai_service.openai_model", model_name)
-        return False
+        try:
+            if service_type == "google":
+                self.settings["ai_service"]["google_model"] = model_name
+            elif service_type == "openai":
+                self.settings["ai_service"]["openai_model"] = model_name
+            else:
+                return False
+
+            self.save_settings()
+            return True
+        except Exception as e:
+            logger.error(f"Error setting model: {str(e)}")
+            return False
 
     def load_settings(self):
-        """Load settings from file"""
+        """
+        Load settings from file
+
+        Returns:
+            Dictionary with settings
+        """
         try:
             if os.path.exists(self.settings_file):
                 with open(self.settings_file, 'r') as f:
-                    settings = json.load(f)
-                logger.info(f"Loaded settings from {self.settings_file}")
+                    loaded_settings = json.load(f)
 
-                # Merge with defaults in case new settings were added
+                # Merge with defaults to ensure all settings exist
                 merged_settings = self.default_settings.copy()
-                merged_settings.update(settings)
+                self._deep_update(merged_settings, loaded_settings)
                 return merged_settings
             else:
-                logger.info("No settings file found, using defaults")
                 return self.default_settings.copy()
         except Exception as e:
             logger.error(f"Error loading settings: {str(e)}")
             return self.default_settings.copy()
 
     def save_settings(self):
-        """Save current settings to file"""
+        """
+        Save settings to file
+
+        Returns:
+            True if successful, False otherwise
+        """
         try:
             with open(self.settings_file, 'w') as f:
                 json.dump(self.settings, f, indent=4)
-            logger.info(f"Saved settings to {self.settings_file}")
             return True
         except Exception as e:
             logger.error(f"Error saving settings: {str(e)}")
@@ -167,23 +226,26 @@ class SettingsManager:
 
     def get_setting(self, key, default=None):
         """
-        Get a setting value
+        Get a setting value by key
 
         Args:
-            key: Setting key (can use dot notation for nested settings)
-            default: Default value if setting doesn't exist
+            key: Setting key (can be nested using dot notation, e.g., 'ai_service.service_type')
+            default: Default value to return if key not found
 
         Returns:
-            Setting value or default
+            Setting value or default if not found
         """
         try:
-            # Handle nested settings with dot notation (e.g., "organization_rules.create_category_folders")
+            # Handle nested keys
             if '.' in key:
                 parts = key.split('.')
                 value = self.settings
                 for part in parts:
-                    value = value.get(part, {})
-                return value if value != {} else default
+                    if part in value:
+                        value = value[part]
+                    else:
+                        return default
+                return value
             else:
                 return self.settings.get(key, default)
         except Exception as e:
@@ -192,30 +254,80 @@ class SettingsManager:
 
     def set_setting(self, key, value):
         """
-        Set a setting value
+        Set a setting value by key
 
         Args:
-            key: Setting key (can use dot notation for nested settings)
+            key: Setting key (can be nested using dot notation, e.g., 'ai_service.service_type')
             value: Value to set
 
         Returns:
             True if successful, False otherwise
         """
         try:
-            # Handle nested settings with dot notation
+            # Handle nested keys
             if '.' in key:
                 parts = key.split('.')
-                setting_ref = self.settings
+                target = self.settings
                 for part in parts[:-1]:
-                    if part not in setting_ref:
-                        setting_ref[part] = {}
-                    setting_ref = setting_ref[part]
-                setting_ref[parts[-1]] = value
+                    if part not in target:
+                        target[part] = {}
+                    target = target[part]
+                target[parts[-1]] = value
             else:
                 self.settings[key] = value
 
-            # Save settings immediately
-            return self.save_settings()
+            self.save_settings()
+            return True
         except Exception as e:
             logger.error(f"Error setting {key}: {str(e)}")
             return False
+
+    def _deep_update(self, target, source):
+        """
+        Deep update a nested dictionary
+
+        Args:
+            target: Target dictionary to update
+            source: Source dictionary with updates
+        """
+        for key, value in source.items():
+            if key in target and isinstance(target[key], dict) and isinstance(value, dict):
+                self._deep_update(target[key], value)
+            else:
+                target[key] = value
+
+    def get_batch_processing_settings(self):
+        """
+        Get batch processing settings
+
+        Returns:
+            Dictionary with batch processing settings
+        """
+        return self.settings.get("batch_processing", self.default_settings["batch_processing"])
+
+    def get_image_analysis_settings(self):
+        """
+        Get image analysis settings
+
+        Returns:
+            Dictionary with image analysis settings
+        """
+        return self.settings.get("image_analysis", self.default_settings["image_analysis"])
+
+    def get_organization_rules_settings(self):
+        """
+        Get organization rules settings
+
+        Returns:
+            Dictionary with organization rules settings
+        """
+        return self.settings.get("organization_rules", self.default_settings["organization_rules"])
+
+    def get_document_summarization_settings(self):
+        """
+        Get document summarization settings
+
+        Returns:
+            Dictionary with document summarization settings
+        """
+        return self.settings.get("document_summarization", self.default_settings["document_summarization"])

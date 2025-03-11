@@ -7,6 +7,7 @@ import threading
 import queue
 import time
 import logging
+from PIL import Image, ImageTk
 
 # Local imports
 from .file_analyzer import FileAnalyzer
@@ -18,6 +19,8 @@ from .utils import get_readable_size, sanitize_filename
 from .duplicate_detector import DuplicateDetector
 from .search_engine import SearchEngine
 from .tag_manager import TagManager
+from .image_analyzer import ImageAnalyzer
+from .organization_rules import OrganizationRuleManager, OrganizationRule
 
 logger = logging.getLogger("AIDocumentOrganizer")
 
@@ -48,6 +51,8 @@ class DocumentOrganizerApp:
         self.duplicate_detector = DuplicateDetector()
         self.search_engine = SearchEngine()
         self.tag_manager = TagManager()
+        self.image_analyzer = ImageAnalyzer()
+        self.rule_manager = self.file_organizer.rule_manager
 
         # Load settings
         self.settings = self.settings_manager.load_settings()
@@ -91,6 +96,68 @@ class DocumentOrganizerApp:
         self.suggest_tags_var = tk.BooleanVar(
             value=self.settings.get("suggest_tags", False))
 
+        # New options for Stage 2 features
+        # Custom rules
+        self.use_custom_rules_var = tk.BooleanVar(
+            value=self.settings.get("use_custom_rules", False))
+        self.rules_file_var = tk.StringVar(
+            value=self.settings.get("rules_file", ""))
+
+        # Batch processing
+        self.use_process_pool_var = tk.BooleanVar(
+            value=self.settings_manager.get_setting("batch_processing.use_process_pool", True))
+        self.adaptive_workers_var = tk.BooleanVar(
+            value=self.settings_manager.get_setting("batch_processing.adaptive_workers", True))
+        self.max_workers_var = tk.StringVar(
+            value=str(self.settings_manager.get_setting("batch_processing.max_workers", 4)))
+        self.memory_limit_var = tk.StringVar(
+            value=str(self.settings_manager.get_setting("batch_processing.memory_limit_percent", 80)))
+        self.enable_pause_resume_var = tk.BooleanVar(
+            value=self.settings_manager.get_setting("batch_processing.enable_pause_resume", True))
+        self.save_job_state_var = tk.BooleanVar(
+            value=self.settings_manager.get_setting("batch_processing.save_job_state", True))
+
+        # Image analysis
+        self.image_analysis_enabled_var = tk.BooleanVar(
+            value=self.settings_manager.get_setting("image_analysis.enabled", True))
+        self.extract_exif_var = tk.BooleanVar(
+            value=self.settings_manager.get_setting("image_analysis.extract_exif", True))
+        self.generate_thumbnails_var = tk.BooleanVar(
+            value=self.settings_manager.get_setting("image_analysis.generate_thumbnails", True))
+        self.thumbnail_width_var = tk.StringVar(
+            value=str(self.settings_manager.get_setting("image_analysis.thumbnail_size", [200, 200])[0]))
+        self.thumbnail_height_var = tk.StringVar(
+            value=str(self.settings_manager.get_setting("image_analysis.thumbnail_size", [200, 200])[1]))
+        self.vision_api_enabled_var = tk.BooleanVar(
+            value=self.settings_manager.get_setting("image_analysis.vision_api_enabled", False))
+        self.vision_api_provider_var = tk.StringVar(
+            value=self.settings_manager.get_setting("image_analysis.vision_api_provider", "google"))
+        self.detect_objects_var = tk.BooleanVar(
+            value=self.settings_manager.get_setting("image_analysis.detect_objects", True))
+        self.detect_faces_var = tk.BooleanVar(
+            value=self.settings_manager.get_setting("image_analysis.detect_faces", False))
+        self.extract_text_var = tk.BooleanVar(
+            value=self.settings_manager.get_setting("image_analysis.extract_text", True))
+        self.content_moderation_var = tk.BooleanVar(
+            value=self.settings_manager.get_setting("image_analysis.content_moderation", False))
+
+        # Document summarization
+        self.summary_length_var = tk.StringVar(
+            value=self.settings_manager.get_setting("document_summarization.summary_length", "medium"))
+        self.extract_key_points_var = tk.BooleanVar(
+            value=self.settings_manager.get_setting("document_summarization.extract_key_points", True))
+        self.extract_action_items_var = tk.BooleanVar(
+            value=self.settings_manager.get_setting("document_summarization.extract_action_items", True))
+        self.generate_executive_summary_var = tk.BooleanVar(
+            value=self.settings_manager.get_setting("document_summarization.generate_executive_summary", False))
+        self.summary_file_format_var = tk.StringVar(
+            value=self.settings_manager.get_setting("document_summarization.summary_file_format", "md"))
+
+        # Current state for rule editing
+        self.selected_rule = None
+        self.current_job_id = None
+        self.is_paused = False
+
         # Thread control
         self.queue = queue.Queue()
         self.running = False
@@ -127,6 +194,12 @@ class DocumentOrganizerApp:
         self.duplicates_tab = ttk.Frame(self.notebook)
         self.search_tab = ttk.Frame(self.notebook)
         self.tags_tab = ttk.Frame(self.notebook)
+        # New tab for organization rules
+        self.rules_tab = ttk.Frame(self.notebook)
+        # New tab for image management
+        self.images_tab = ttk.Frame(self.notebook)
+        # New tab for batch processing
+        self.batch_tab = ttk.Frame(self.notebook)
         self.settings_tab = ttk.Frame(self.notebook)
 
         # Add tabs to notebook
@@ -134,7 +207,14 @@ class DocumentOrganizerApp:
         self.notebook.add(self.duplicates_tab, text="Duplicates")
         self.notebook.add(self.search_tab, text="Advanced Search")
         self.notebook.add(self.tags_tab, text="Tags")
+        self.notebook.add(self.rules_tab, text="Rules")  # Add new tab
+        self.notebook.add(self.images_tab, text="Images")  # Add new tab
+        self.notebook.add(
+            self.batch_tab, text="Batch Processing")  # Add new tab
         self.notebook.add(self.settings_tab, text="Settings")
+
+        # Pack notebook
+        self.notebook.pack(fill="both", expand=True, padx=5, pady=5)
 
         # Create directory selection frame
         self.dir_frame = ttk.LabelFrame(
@@ -143,16 +223,21 @@ class DocumentOrganizerApp:
         # Source directory
         self.source_label = ttk.Label(self.dir_frame, text="Source Directory:")
         self.source_entry = ttk.Entry(
-            self.dir_frame, textvariable=self.source_dir, width=50)
+            self.dir_frame, textvariable=self.source_dir, width=40)
         self.source_button = ttk.Button(
-            self.dir_frame, text="Browse", command=self.browse_source)
+            self.dir_frame, text="Browse...", command=self.browse_source)
 
         # Target directory
         self.target_label = ttk.Label(self.dir_frame, text="Target Directory:")
         self.target_entry = ttk.Entry(
-            self.dir_frame, textvariable=self.target_dir, width=50)
+            self.dir_frame, textvariable=self.target_dir, width=40)
         self.target_button = ttk.Button(
-            self.dir_frame, text="Browse", command=self.browse_target)
+            self.dir_frame, text="Browse...", command=self.browse_target)
+
+        # Create the contents of the new tabs
+        self._create_rules_tab()
+        self._create_images_tab()
+        self._create_batch_tab()
 
         # Create options frame
         self.options_frame = ttk.LabelFrame(
@@ -1380,7 +1465,37 @@ class DocumentOrganizerApp:
                 "duplicate_action": self.duplicate_action_var.get(),
                 "duplicate_strategy": self.duplicate_strategy_var.get(),
                 "apply_tags": self.apply_tags_var.get(),
-                "suggest_tags": self.suggest_tags_var.get()
+                "suggest_tags": self.suggest_tags_var.get(),
+                # Add Stage 2 options
+                "use_custom_rules": self.use_custom_rules_var.get(),
+                "rules_file": self.rules_file_var.get(),
+                "batch_processing": {
+                    "use_process_pool": self.use_process_pool_var.get(),
+                    "adaptive_workers": self.adaptive_workers_var.get(),
+                    "max_workers": self.max_workers_var.get(),
+                    "memory_limit_percent": self.memory_limit_var.get(),
+                    "enable_pause_resume": self.enable_pause_resume_var.get(),
+                    "save_job_state": self.save_job_state_var.get(),
+                },
+                "image_analysis": {
+                    "enabled": self.image_analysis_enabled_var.get(),
+                    "extract_exif": self.extract_exif_var.get(),
+                    "generate_thumbnails": self.generate_thumbnails_var.get(),
+                    "thumbnail_size": [int(self.thumbnail_width_var.get()), int(self.thumbnail_height_var.get())],
+                    "vision_api_enabled": self.vision_api_enabled_var.get(),
+                    "vision_api_provider": self.vision_api_provider_var.get(),
+                    "detect_objects": self.detect_objects_var.get(),
+                    "detect_faces": self.detect_faces_var.get(),
+                    "extract_text": self.extract_text_var.get(),
+                    "content_moderation": self.content_moderation_var.get(),
+                },
+                "document_summarization": {
+                    "summary_length": self.summary_length_var.get(),
+                    "extract_key_points": self.extract_key_points_var.get(),
+                    "extract_action_items": self.extract_action_items_var.get(),
+                    "generate_executive_summary": self.generate_executive_summary_var.get(),
+                    "summary_file_format": self.summary_file_format_var.get(),
+                },
             }
 
             # Save to settings
@@ -1611,6 +1726,176 @@ class DocumentOrganizerApp:
             variable=self.copy_instead_of_move_var,
             command=self.save_organization_rules)
 
+        # Custom rules
+        self.use_custom_rules_check = ttk.Checkbutton(
+            self.organization_rules_frame,
+            text="Use custom rules",
+            variable=self.use_custom_rules_var,
+            command=self.save_organization_rules)
+
+        # Rules file
+        self.rules_file_entry = ttk.Entry(
+            self.organization_rules_frame, textvariable=self.rules_file_var, width=40)
+        self.rules_file_button = ttk.Button(
+            self.organization_rules_frame, text="Browse...",
+            command=lambda: self.browse_rules_file(save=True))
+
+        # Batch processing
+        self.use_process_pool_check = ttk.Checkbutton(
+            self.organization_rules_frame,
+            text="Use process pool",
+            variable=self.use_process_pool_var,
+            command=self.save_organization_rules)
+
+        self.adaptive_workers_check = ttk.Checkbutton(
+            self.organization_rules_frame,
+            text="Adaptive workers",
+            variable=self.adaptive_workers_var,
+            command=self.save_organization_rules)
+
+        self.max_workers_entry = ttk.Entry(
+            self.organization_rules_frame, textvariable=self.max_workers_var, width=5)
+        self.max_workers_button = ttk.Button(
+            self.organization_rules_frame, text="Save",
+            command=self.save_max_workers)
+        self.max_workers_info = ttk.Label(
+            self.organization_rules_frame,
+            text="Number of workers to use (1-10 recommended)")
+
+        self.memory_limit_entry = ttk.Entry(
+            self.organization_rules_frame, textvariable=self.memory_limit_var, width=5)
+        self.memory_limit_button = ttk.Button(
+            self.organization_rules_frame, text="Save",
+            command=self.save_memory_limit)
+        self.memory_limit_info = ttk.Label(
+            self.organization_rules_frame,
+            text="Memory limit as a percentage (50-100 recommended)")
+
+        self.enable_pause_resume_check = ttk.Checkbutton(
+            self.organization_rules_frame,
+            text="Enable pause/resume",
+            variable=self.enable_pause_resume_var,
+            command=self.save_organization_rules)
+
+        self.save_job_state_check = ttk.Checkbutton(
+            self.organization_rules_frame,
+            text="Save job state",
+            variable=self.save_job_state_var,
+            command=self.save_organization_rules)
+
+        # Image analysis
+        self.image_analysis_enabled_check = ttk.Checkbutton(
+            self.organization_rules_frame,
+            text="Enable image analysis",
+            variable=self.image_analysis_enabled_var,
+            command=self.save_organization_rules)
+
+        self.extract_exif_check = ttk.Checkbutton(
+            self.organization_rules_frame,
+            text="Extract EXIF data",
+            variable=self.extract_exif_var,
+            command=self.save_organization_rules)
+
+        self.generate_thumbnails_check = ttk.Checkbutton(
+            self.organization_rules_frame,
+            text="Generate thumbnails",
+            variable=self.generate_thumbnails_var,
+            command=self.save_organization_rules)
+
+        self.thumbnail_width_entry = ttk.Entry(
+            self.organization_rules_frame, textvariable=self.thumbnail_width_var, width=5)
+        self.thumbnail_width_button = ttk.Button(
+            self.organization_rules_frame, text="Save",
+            command=self.save_thumbnail_size)
+        self.thumbnail_width_info = ttk.Label(
+            self.organization_rules_frame,
+            text="Thumbnail width (pixels, 100-1000 recommended)")
+
+        self.thumbnail_height_entry = ttk.Entry(
+            self.organization_rules_frame, textvariable=self.thumbnail_height_var, width=5)
+        self.thumbnail_height_button = ttk.Button(
+            self.organization_rules_frame, text="Save",
+            command=self.save_thumbnail_size)
+        self.thumbnail_height_info = ttk.Label(
+            self.organization_rules_frame,
+            text="Thumbnail height (pixels, 100-1000 recommended)")
+
+        self.vision_api_enabled_check = ttk.Checkbutton(
+            self.organization_rules_frame,
+            text="Enable Vision API",
+            variable=self.vision_api_enabled_var,
+            command=self.save_organization_rules)
+
+        self.vision_api_provider_entry = ttk.Entry(
+            self.organization_rules_frame, textvariable=self.vision_api_provider_var, width=30)
+        self.vision_api_provider_button = ttk.Button(
+            self.organization_rules_frame, text="Save",
+            command=self.save_vision_provider)
+        self.vision_api_provider_info = ttk.Label(
+            self.organization_rules_frame,
+            text="Provider for Vision API (google, azure, etc.)")
+
+        self.detect_objects_check = ttk.Checkbutton(
+            self.organization_rules_frame,
+            text="Detect objects",
+            variable=self.detect_objects_var,
+            command=self.save_organization_rules)
+
+        self.detect_faces_check = ttk.Checkbutton(
+            self.organization_rules_frame,
+            text="Detect faces",
+            variable=self.detect_faces_var,
+            command=self.save_organization_rules)
+
+        self.extract_text_check = ttk.Checkbutton(
+            self.organization_rules_frame,
+            text="Extract text",
+            variable=self.extract_text_var,
+            command=self.save_organization_rules)
+
+        self.content_moderation_check = ttk.Checkbutton(
+            self.organization_rules_frame,
+            text="Content moderation",
+            variable=self.content_moderation_var,
+            command=self.save_organization_rules)
+
+        # Document summarization
+        self.summary_length_entry = ttk.Entry(
+            self.organization_rules_frame, textvariable=self.summary_length_var, width=5)
+        self.summary_length_button = ttk.Button(
+            self.organization_rules_frame, text="Save",
+            command=self.save_summary_length)
+        self.summary_length_info = ttk.Label(
+            self.organization_rules_frame,
+            text="Summary length (short, medium, long)")
+
+        self.extract_key_points_check = ttk.Checkbutton(
+            self.organization_rules_frame,
+            text="Extract key points",
+            variable=self.extract_key_points_var,
+            command=self.save_organization_rules)
+
+        self.extract_action_items_check = ttk.Checkbutton(
+            self.organization_rules_frame,
+            text="Extract action items",
+            variable=self.extract_action_items_var,
+            command=self.save_organization_rules)
+
+        self.generate_executive_summary_check = ttk.Checkbutton(
+            self.organization_rules_frame,
+            text="Generate executive summary",
+            variable=self.generate_executive_summary_var,
+            command=self.save_organization_rules)
+
+        self.summary_file_format_entry = ttk.Entry(
+            self.organization_rules_frame, textvariable=self.summary_file_format_var, width=5)
+        self.summary_file_format_button = ttk.Button(
+            self.organization_rules_frame, text="Save",
+            command=self.save_summary_file_format)
+        self.summary_file_format_info = ttk.Label(
+            self.organization_rules_frame,
+            text="Format for summary files (md, txt, html, etc.)")
+
     def save_logging_settings(self):
         """Save logging settings to the settings manager"""
         try:
@@ -1651,7 +1936,37 @@ class DocumentOrganizerApp:
                 "duplicate_action": self.duplicate_action_var.get(),
                 "duplicate_strategy": self.duplicate_strategy_var.get(),
                 "apply_tags": self.apply_tags_var.get(),
-                "suggest_tags": self.suggest_tags_var.get()
+                "suggest_tags": self.suggest_tags_var.get(),
+                # Add Stage 2 options
+                "use_custom_rules": self.use_custom_rules_var.get(),
+                "rules_file": self.rules_file_var.get(),
+                "batch_processing": {
+                    "use_process_pool": self.use_process_pool_var.get(),
+                    "adaptive_workers": self.adaptive_workers_var.get(),
+                    "max_workers": self.max_workers_var.get(),
+                    "memory_limit_percent": self.memory_limit_var.get(),
+                    "enable_pause_resume": self.enable_pause_resume_var.get(),
+                    "save_job_state": self.save_job_state_var.get(),
+                },
+                "image_analysis": {
+                    "enabled": self.image_analysis_enabled_var.get(),
+                    "extract_exif": self.extract_exif_var.get(),
+                    "generate_thumbnails": self.generate_thumbnails_var.get(),
+                    "thumbnail_size": [int(self.thumbnail_width_var.get()), int(self.thumbnail_height_var.get())],
+                    "vision_api_enabled": self.vision_api_enabled_var.get(),
+                    "vision_api_provider": self.vision_api_provider_var.get(),
+                    "detect_objects": self.detect_objects_var.get(),
+                    "detect_faces": self.detect_faces_var.get(),
+                    "extract_text": self.extract_text_var.get(),
+                    "content_moderation": self.content_moderation_var.get(),
+                },
+                "document_summarization": {
+                    "summary_length": self.summary_length_var.get(),
+                    "extract_key_points": self.extract_key_points_var.get(),
+                    "extract_action_items": self.extract_action_items_var.get(),
+                    "generate_executive_summary": self.generate_executive_summary_var.get(),
+                    "summary_file_format": self.summary_file_format_var.get(),
+                },
             }
 
             # Pass the callback and options to the organizer
@@ -2411,3 +2726,1409 @@ class DocumentOrganizerApp:
         color = colorchooser.askcolor()[1]
         if color:
             color_var.set(color)
+
+    def _create_rules_tab(self):
+        """Create the organization rules tab"""
+        # Main frame
+        rules_frame = ttk.Frame(self.rules_tab, padding="10")
+        rules_frame.pack(fill="both", expand=True)
+
+        # Split into two panes - left for rule list, right for rule editing
+        rules_paned = ttk.PanedWindow(rules_frame, orient=tk.HORIZONTAL)
+        rules_paned.pack(fill="both", expand=True)
+
+        # Left pane - Rule list and management
+        rule_list_frame = ttk.LabelFrame(
+            rules_paned, text="Organization Rules", padding="10")
+        rules_paned.add(rule_list_frame, weight=1)
+
+        # Rule list with scrollbar
+        rule_list_frame_inner = ttk.Frame(rule_list_frame)
+        rule_list_frame_inner.pack(fill="both", expand=True)
+
+        self.rule_list = ttk.Treeview(rule_list_frame_inner, columns=("priority", "type", "enabled"),
+                                      show="headings", selectmode="browse")
+        self.rule_list.heading("priority", text="Priority")
+        self.rule_list.heading("type", text="Type")
+        self.rule_list.heading("enabled", text="Enabled")
+
+        self.rule_list.column("priority", width=60, anchor="center")
+        self.rule_list.column("type", width=100)
+        self.rule_list.column("enabled", width=60, anchor="center")
+
+        # Bind selection event
+        self.rule_list.bind("<<TreeviewSelect>>", self.on_rule_select)
+
+        # Scrollbars
+        rule_list_vsb = ttk.Scrollbar(
+            rule_list_frame_inner, orient="vertical", command=self.rule_list.yview)
+        self.rule_list.configure(yscrollcommand=rule_list_vsb.set)
+
+        # Pack rule list and scrollbar
+        self.rule_list.pack(side="left", fill="both", expand=True)
+        rule_list_vsb.pack(side="right", fill="y")
+
+        # Rule list buttons
+        rule_buttons_frame = ttk.Frame(rule_list_frame, padding="5")
+        rule_buttons_frame.pack(fill="x", pady=5)
+
+        ttk.Button(rule_buttons_frame, text="Add Rule",
+                   command=self.add_rule).pack(side="left", padx=5)
+        ttk.Button(rule_buttons_frame, text="Edit Rule",
+                   command=self.edit_rule).pack(side="left", padx=5)
+        ttk.Button(rule_buttons_frame, text="Delete Rule",
+                   command=self.delete_rule).pack(side="left", padx=5)
+        ttk.Button(rule_buttons_frame, text="Enable/Disable",
+                   command=self.toggle_rule).pack(side="left", padx=5)
+
+        # IO buttons
+        rule_io_frame = ttk.Frame(rule_list_frame, padding="5")
+        rule_io_frame.pack(fill="x", pady=5)
+
+        ttk.Button(rule_io_frame, text="Import Rules",
+                   command=self.import_rules).pack(side="left", padx=5)
+        ttk.Button(rule_io_frame, text="Export Rules",
+                   command=self.export_rules).pack(side="left", padx=5)
+
+        # Right pane - Rule editing
+        self.rule_edit_frame = ttk.LabelFrame(
+            rules_paned, text="Rule Editor", padding="10")
+        rules_paned.add(self.rule_edit_frame, weight=2)
+
+        # Rule properties
+        rule_props_frame = ttk.Frame(self.rule_edit_frame, padding="5")
+        rule_props_frame.pack(fill="x", pady=5)
+
+        # Rule name
+        ttk.Label(rule_props_frame, text="Rule Name:").grid(
+            row=0, column=0, sticky="w", padx=5, pady=5)
+        self.rule_name_var = tk.StringVar()
+        ttk.Entry(rule_props_frame, textvariable=self.rule_name_var, width=40).grid(
+            row=0, column=1, sticky="w", padx=5, pady=5)
+
+        # Rule description
+        ttk.Label(rule_props_frame, text="Description:").grid(
+            row=1, column=0, sticky="w", padx=5, pady=5)
+        self.rule_desc_var = tk.StringVar()
+        ttk.Entry(rule_props_frame, textvariable=self.rule_desc_var, width=40).grid(
+            row=1, column=1, sticky="w", padx=5, pady=5)
+
+        # Rule priority
+        ttk.Label(rule_props_frame, text="Priority:").grid(
+            row=2, column=0, sticky="w", padx=5, pady=5)
+        self.rule_priority_var = tk.StringVar(value="100")
+        ttk.Entry(rule_props_frame, textvariable=self.rule_priority_var, width=10).grid(
+            row=2, column=1, sticky="w", padx=5, pady=5)
+        ttk.Label(rule_props_frame, text="(Lower number = higher priority)").grid(
+            row=2, column=2, sticky="w", padx=5, pady=5)
+
+        # Rule type
+        ttk.Label(rule_props_frame, text="Rule Type:").grid(
+            row=3, column=0, sticky="w", padx=5, pady=5)
+        self.rule_type_var = tk.StringVar(value="File Name Pattern")
+        self.rule_types = [
+            ("File Name Pattern", "pattern"),
+            ("File Content", "content"),
+            ("File Metadata", "metadata"),
+            ("Date/Time", "date"),
+            ("File Tags", "tag"),
+            ("AI Analysis", "ai"),
+            ("Image Properties", "image")
+        ]
+        rule_type_combo = ttk.Combobox(rule_props_frame, textvariable=self.rule_type_var,
+                                       values=[t[0] for t in self.rule_types], state="readonly", width=20)
+        rule_type_combo.grid(row=3, column=1, sticky="w", padx=5, pady=5)
+        rule_type_combo.bind("<<ComboboxSelected>>",
+                             self.update_rule_condition_frame)
+
+        # Rule condition frame (will be populated based on rule type)
+        self.rule_condition_frame = ttk.LabelFrame(
+            self.rule_edit_frame, text="Condition", padding="10")
+        self.rule_condition_frame.pack(fill="x", pady=10)
+
+        # Placeholder for condition widgets
+        self.condition_widgets = []
+
+        # Initial condition widgets
+        self.update_rule_condition_frame()
+
+        # Rule action frame
+        rule_action_frame = ttk.LabelFrame(
+            self.rule_edit_frame, text="Action", padding="10")
+        rule_action_frame.pack(fill="x", pady=10)
+
+        # Target path template
+        ttk.Label(rule_action_frame, text="Target Path Template:").grid(
+            row=0, column=0, sticky="w", padx=5, pady=5)
+        self.target_path_var = tk.StringVar()
+        ttk.Entry(rule_action_frame, textvariable=self.target_path_var, width=40).grid(
+            row=0, column=1, sticky="w", padx=5, pady=5)
+
+        # Path template help
+        ttk.Label(rule_action_frame, text="(Use {placeholders} like {year}, {month}, {category}, etc.)").grid(
+            row=1, column=0, columnspan=2, sticky="w", padx=5, pady=5)
+
+        # Action options
+        self.should_copy_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(rule_action_frame, text="Copy files (instead of moving)",
+                        variable=self.should_copy_var).grid(row=2, column=0, sticky="w", padx=5, pady=5)
+
+        self.create_summary_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(rule_action_frame, text="Create summary files",
+                        variable=self.create_summary_var).grid(row=2, column=1, sticky="w", padx=5, pady=5)
+
+        # Save/cancel buttons
+        rule_button_frame = ttk.Frame(self.rule_edit_frame, padding="5")
+        rule_button_frame.pack(fill="x", pady=10)
+
+        ttk.Button(rule_button_frame, text="Save Rule",
+                   command=self.save_rule).pack(side="left", padx=5)
+        ttk.Button(rule_button_frame, text="Cancel",
+                   command=self.cancel_rule_edit).pack(side="left", padx=5)
+        ttk.Button(rule_button_frame, text="Test Rule",
+                   command=self.test_rule).pack(side="left", padx=5)
+
+        # Populate rule list
+        self.populate_rule_list()
+
+        # Instructions
+        ttk.Label(rule_button_frame, text="Create and manage rules to automatically organize your files.").pack(
+            side="right", padx=5)
+
+    def _create_images_tab(self):
+        """Create the images tab"""
+        # Main frame
+        images_frame = ttk.Frame(self.images_tab, padding="10")
+        images_frame.pack(fill="both", expand=True)
+
+        # Split into two panes - top for filters, bottom for image grid
+        images_paned = ttk.PanedWindow(images_frame, orient=tk.VERTICAL)
+        images_paned.pack(fill="both", expand=True)
+
+        # Top pane - Filters and options
+        image_options_frame = ttk.LabelFrame(
+            images_paned, text="Image Options", padding="10")
+        images_paned.add(image_options_frame, weight=1)
+
+        # Image filter options
+        image_filter_frame = ttk.Frame(image_options_frame, padding="5")
+        image_filter_frame.pack(fill="x", pady=5)
+
+        # Image search
+        ttk.Label(image_filter_frame, text="Search:").grid(
+            row=0, column=0, sticky="w", padx=5, pady=5)
+        self.image_search_var = tk.StringVar()
+        ttk.Entry(image_filter_frame, textvariable=self.image_search_var,
+                  width=30).grid(row=0, column=1, sticky="w", padx=5, pady=5)
+        ttk.Button(image_filter_frame, text="Search", command=self.search_images).grid(
+            row=0, column=2, sticky="w", padx=5, pady=5)
+
+        # Image type filter
+        ttk.Label(image_filter_frame, text="Image Type:").grid(
+            row=1, column=0, sticky="w", padx=5, pady=5)
+        self.image_type_var = tk.StringVar(value="All")
+        image_type_combo = ttk.Combobox(image_filter_frame, textvariable=self.image_type_var,
+                                        values=["All", "JPG", "PNG",
+                                                "GIF", "BMP", "TIFF", "WebP"],
+                                        state="readonly", width=15)
+        image_type_combo.grid(row=1, column=1, sticky="w", padx=5, pady=5)
+        image_type_combo.bind("<<ComboboxSelected>>", self.filter_images)
+
+        # Date range filter
+        ttk.Label(image_filter_frame, text="Date Range:").grid(
+            row=2, column=0, sticky="w", padx=5, pady=5)
+        date_frame = ttk.Frame(image_filter_frame)
+        date_frame.grid(row=2, column=1, columnspan=2,
+                        sticky="w", padx=5, pady=5)
+
+        self.image_date_from_var = tk.StringVar()
+        self.image_date_to_var = tk.StringVar()
+        ttk.Label(date_frame, text="From:").pack(side="left", padx=2)
+        ttk.Entry(date_frame, textvariable=self.image_date_from_var,
+                  width=10).pack(side="left", padx=2)
+        ttk.Label(date_frame, text="To:").pack(side="left", padx=2)
+        ttk.Entry(date_frame, textvariable=self.image_date_to_var,
+                  width=10).pack(side="left", padx=2)
+        ttk.Button(date_frame, text="Apply", command=self.filter_images).pack(
+            side="left", padx=5)
+
+        # Content filter (for AI-detected content)
+        ttk.Label(image_filter_frame, text="Content:").grid(
+            row=3, column=0, sticky="w", padx=5, pady=5)
+        self.image_content_var = tk.StringVar()
+        ttk.Entry(image_filter_frame, textvariable=self.image_content_var,
+                  width=30).grid(row=3, column=1, sticky="w", padx=5, pady=5)
+        ttk.Button(image_filter_frame, text="Filter", command=self.filter_images).grid(
+            row=3, column=2, sticky="w", padx=5, pady=5)
+
+        # View options
+        image_view_frame = ttk.LabelFrame(
+            image_options_frame, text="View Options", padding="5")
+        image_view_frame.pack(fill="x", pady=5)
+
+        # Thumbnail size
+        ttk.Label(image_view_frame, text="Thumbnail Size:").grid(
+            row=0, column=0, sticky="w", padx=5, pady=5)
+        self.thumbnail_size_var = tk.StringVar(value="Medium")
+        thumbnail_size_combo = ttk.Combobox(image_view_frame, textvariable=self.thumbnail_size_var,
+                                            values=[
+                                                "Small", "Medium", "Large"],
+                                            state="readonly", width=10)
+        thumbnail_size_combo.grid(row=0, column=1, sticky="w", padx=5, pady=5)
+        thumbnail_size_combo.bind(
+            "<<ComboboxSelected>>", self.update_thumbnail_size)
+
+        # Sort order
+        ttk.Label(image_view_frame, text="Sort By:").grid(
+            row=0, column=2, sticky="w", padx=5, pady=5)
+        self.image_sort_var = tk.StringVar(value="Date (Newest)")
+        image_sort_combo = ttk.Combobox(image_view_frame, textvariable=self.image_sort_var,
+                                        values=[
+                                            "Date (Newest)", "Date (Oldest)", "Name", "Size"],
+                                        state="readonly", width=15)
+        image_sort_combo.grid(row=0, column=3, sticky="w", padx=5, pady=5)
+        image_sort_combo.bind("<<ComboboxSelected>>", self.sort_images)
+
+        # Bottom pane - Image grid
+        image_grid_frame = ttk.LabelFrame(
+            images_paned, text="Images", padding="10")
+        images_paned.add(image_grid_frame, weight=3)
+
+        # Create a canvas with scrollbars for the image grid
+        image_canvas_frame = ttk.Frame(image_grid_frame)
+        image_canvas_frame.pack(fill="both", expand=True)
+
+        self.image_canvas = tk.Canvas(image_canvas_frame)
+        self.image_canvas.pack(side="left", fill="both", expand=True)
+
+        image_vsb = ttk.Scrollbar(
+            image_canvas_frame, orient="vertical", command=self.image_canvas.yview)
+        image_vsb.pack(side="right", fill="y")
+        self.image_canvas.configure(yscrollcommand=image_vsb.set)
+
+        image_hsb = ttk.Scrollbar(
+            image_grid_frame, orient="horizontal", command=self.image_canvas.xview)
+        image_hsb.pack(side="bottom", fill="x")
+        self.image_canvas.configure(xscrollcommand=image_hsb.set)
+
+        # Frame to hold the image grid (inside canvas)
+        self.image_grid = ttk.Frame(self.image_canvas)
+        self.image_canvas.create_window(
+            (0, 0), window=self.image_grid, anchor='nw')
+
+        # Bind canvas configure event to update scroll region
+        self.image_grid.bind("<Configure>", lambda e: self.image_canvas.configure(
+            scrollregion=self.image_canvas.bbox("all")))
+
+        # Status and actions at the bottom
+        image_status_frame = ttk.Frame(images_frame, padding="5")
+        image_status_frame.pack(fill="x", side="bottom", pady=5)
+
+        self.image_count_var = tk.StringVar(value="0 images found")
+        ttk.Label(image_status_frame, textvariable=self.image_count_var).pack(
+            side="left", padx=5)
+
+        ttk.Button(image_status_frame, text="Analyze Selected",
+                   command=self.analyze_selected_images).pack(side="right", padx=5)
+        ttk.Button(image_status_frame, text="Organize Selected",
+                   command=self.organize_selected_images).pack(side="right", padx=5)
+
+        # Store image references to prevent garbage collection
+        self.image_references = []
+        self.selected_images = []
+
+    def _create_batch_tab(self):
+        """Create the batch processing tab"""
+        # Main frame
+        batch_frame = ttk.Frame(self.batch_tab, padding="10")
+        batch_frame.pack(fill="both", expand=True)
+
+        # Split into top (control) and bottom (jobs) sections
+        batch_paned = ttk.PanedWindow(batch_frame, orient=tk.VERTICAL)
+        batch_paned.pack(fill="both", expand=True)
+
+        # Top pane - Batch processing controls
+        batch_control_frame = ttk.LabelFrame(
+            batch_paned, text="Batch Processing Control", padding="10")
+        batch_paned.add(batch_control_frame, weight=1)
+
+        # Batch processing settings
+        batch_settings_frame = ttk.Frame(batch_control_frame, padding="5")
+        batch_settings_frame.pack(fill="x", pady=5)
+
+        # Source directory
+        ttk.Label(batch_settings_frame, text="Source Directory:").grid(
+            row=0, column=0, sticky="w", padx=5, pady=5)
+        self.batch_source_var = tk.StringVar(value=self.source_dir.get())
+        ttk.Entry(batch_settings_frame, textvariable=self.batch_source_var,
+                  width=40).grid(row=0, column=1, sticky="w", padx=5, pady=5)
+        ttk.Button(batch_settings_frame, text="Browse...", command=self.browse_batch_source).grid(
+            row=0, column=2, sticky="w", padx=5, pady=5)
+
+        # Target directory
+        ttk.Label(batch_settings_frame, text="Target Directory:").grid(
+            row=1, column=0, sticky="w", padx=5, pady=5)
+        self.batch_target_var = tk.StringVar(value=self.target_dir.get())
+        ttk.Entry(batch_settings_frame, textvariable=self.batch_target_var,
+                  width=40).grid(row=1, column=1, sticky="w", padx=5, pady=5)
+        ttk.Button(batch_settings_frame, text="Browse...", command=self.browse_batch_target).grid(
+            row=1, column=2, sticky="w", padx=5, pady=5)
+
+        # Batch size
+        ttk.Label(batch_settings_frame, text="Batch Size:").grid(
+            row=2, column=0, sticky="w", padx=5, pady=5)
+        ttk.Entry(batch_settings_frame, textvariable=self.batch_size_var,
+                  width=10).grid(row=2, column=1, sticky="w", padx=5, pady=5)
+
+        # Batch delay
+        ttk.Label(batch_settings_frame, text="Batch Delay (seconds):").grid(
+            row=3, column=0, sticky="w", padx=5, pady=5)
+        ttk.Entry(batch_settings_frame, textvariable=self.batch_delay_var,
+                  width=10).grid(row=3, column=1, sticky="w", padx=5, pady=5)
+
+        # Process pool
+        ttk.Checkbutton(batch_settings_frame, text="Use Process Pool",
+                        variable=self.use_process_pool_var).grid(row=4, column=0, sticky="w", padx=5, pady=5)
+
+        # Adaptive workers
+        ttk.Checkbutton(batch_settings_frame, text="Adaptive Worker Count",
+                        variable=self.adaptive_workers_var).grid(row=4, column=1, sticky="w", padx=5, pady=5)
+
+        # Max workers
+        ttk.Label(batch_settings_frame, text="Max Workers:").grid(
+            row=5, column=0, sticky="w", padx=5, pady=5)
+        ttk.Entry(batch_settings_frame, textvariable=self.max_workers_var,
+                  width=10).grid(row=5, column=1, sticky="w", padx=5, pady=5)
+
+        # Memory limit
+        ttk.Label(batch_settings_frame, text="Memory Limit (%):").grid(
+            row=6, column=0, sticky="w", padx=5, pady=5)
+        ttk.Entry(batch_settings_frame, textvariable=self.memory_limit_var,
+                  width=10).grid(row=6, column=1, sticky="w", padx=5, pady=5)
+
+        # Pause/Resume
+        ttk.Checkbutton(batch_settings_frame, text="Enable Pause/Resume",
+                        variable=self.enable_pause_resume_var).grid(row=7, column=0, sticky="w", padx=5, pady=5)
+
+        # Save job state
+        ttk.Checkbutton(batch_settings_frame, text="Save Job State",
+                        variable=self.save_job_state_var).grid(row=7, column=1, sticky="w", padx=5, pady=5)
+
+        # Action buttons
+        batch_action_frame = ttk.Frame(batch_control_frame, padding="5")
+        batch_action_frame.pack(fill="x", pady=5)
+
+        self.start_batch_button = ttk.Button(
+            batch_action_frame, text="Start Batch", command=self.start_batch)
+        self.start_batch_button.pack(side="left", padx=5)
+
+        self.pause_batch_button = ttk.Button(
+            batch_action_frame, text="Pause", command=self.pause_batch)
+        self.pause_batch_button.pack(side="left", padx=5)
+        self.pause_batch_button.configure(state="disabled")
+
+        self.resume_batch_button = ttk.Button(
+            batch_action_frame, text="Resume", command=self.resume_batch)
+        self.resume_batch_button.pack(side="left", padx=5)
+        self.resume_batch_button.configure(state="disabled")
+
+        self.cancel_batch_button = ttk.Button(
+            batch_action_frame, text="Cancel", command=self.cancel_batch)
+        self.cancel_batch_button.pack(side="left", padx=5)
+        self.cancel_batch_button.configure(state="disabled")
+
+        # Progress frame
+        batch_progress_frame = ttk.LabelFrame(
+            batch_control_frame, text="Progress", padding="10")
+        batch_progress_frame.pack(fill="x", pady=5)
+
+        # Overall progress
+        ttk.Label(batch_progress_frame, text="Overall Progress:").grid(
+            row=0, column=0, sticky="w", padx=5, pady=5)
+        self.batch_progress = ttk.Progressbar(
+            batch_progress_frame, variable=self.progress_var, length=400)
+        self.batch_progress.grid(row=0, column=1, sticky="w", padx=5, pady=5)
+
+        # Status message
+        ttk.Label(batch_progress_frame, text="Status:").grid(
+            row=1, column=0, sticky="w", padx=5, pady=5)
+        self.batch_status_var = tk.StringVar(value="Ready")
+        ttk.Label(batch_progress_frame, textvariable=self.batch_status_var).grid(
+            row=1, column=1, sticky="w", padx=5, pady=5)
+
+        # Resource usage
+        ttk.Label(batch_progress_frame, text="CPU Usage:").grid(
+            row=2, column=0, sticky="w", padx=5, pady=5)
+        self.cpu_usage_var = tk.StringVar(value="0%")
+        ttk.Label(batch_progress_frame, textvariable=self.cpu_usage_var).grid(
+            row=2, column=1, sticky="w", padx=5, pady=5)
+
+        ttk.Label(batch_progress_frame, text="Memory Usage:").grid(
+            row=3, column=0, sticky="w", padx=5, pady=5)
+        self.memory_usage_var = tk.StringVar(value="0%")
+        ttk.Label(batch_progress_frame, textvariable=self.memory_usage_var).grid(
+            row=3, column=1, sticky="w", padx=5, pady=5)
+
+        # Time estimates
+        ttk.Label(batch_progress_frame, text="Elapsed Time:").grid(
+            row=4, column=0, sticky="w", padx=5, pady=5)
+        self.elapsed_time_var = tk.StringVar(value="00:00:00")
+        ttk.Label(batch_progress_frame, textvariable=self.elapsed_time_var).grid(
+            row=4, column=1, sticky="w", padx=5, pady=5)
+
+        ttk.Label(batch_progress_frame, text="Estimated Time Remaining:").grid(
+            row=5, column=0, sticky="w", padx=5, pady=5)
+        self.remaining_time_var = tk.StringVar(value="00:00:00")
+        ttk.Label(batch_progress_frame, textvariable=self.remaining_time_var).grid(
+            row=5, column=1, sticky="w", padx=5, pady=5)
+
+        # Bottom pane - Job history
+        job_history_frame = ttk.LabelFrame(
+            batch_paned, text="Job History", padding="10")
+        batch_paned.add(job_history_frame, weight=1)
+
+        # Job history list with scrollbar
+        job_history_frame_inner = ttk.Frame(job_history_frame)
+        job_history_frame_inner.pack(fill="both", expand=True)
+
+        self.job_list = ttk.Treeview(job_history_frame_inner,
+                                     columns=("start_time", "status",
+                                              "files", "progress"),
+                                     show="headings", selectmode="browse")
+        self.job_list.heading("start_time", text="Start Time")
+        self.job_list.heading("status", text="Status")
+        self.job_list.heading("files", text="Files")
+        self.job_list.heading("progress", text="Progress")
+
+        self.job_list.column("start_time", width=150)
+        self.job_list.column("status", width=100)
+        self.job_list.column("files", width=100)
+        self.job_list.column("progress", width=100)
+
+        # Scrollbars
+        job_list_vsb = ttk.Scrollbar(
+            job_history_frame_inner, orient="vertical", command=self.job_list.yview)
+        self.job_list.configure(yscrollcommand=job_list_vsb.set)
+
+        # Pack job list and scrollbar
+        self.job_list.pack(side="left", fill="both", expand=True)
+        job_list_vsb.pack(side="right", fill="y")
+
+        # Job actions
+        job_actions_frame = ttk.Frame(job_history_frame, padding="5")
+        job_actions_frame.pack(fill="x", pady=5)
+
+        ttk.Button(job_actions_frame, text="Resume Selected Job",
+                   command=self.resume_selected_job).pack(side="left", padx=5)
+        ttk.Button(job_actions_frame, text="View Details",
+                   command=self.view_job_details).pack(side="left", padx=5)
+        ttk.Button(job_actions_frame, text="Clear Completed",
+                   command=self.clear_completed_jobs).pack(side="left", padx=5)
+
+        # Initialize job list
+        self.update_job_list()
+
+    # Rule management methods
+    def populate_rule_list(self):
+        """Populate the rule list with rules from the rule manager"""
+        # Clear existing items
+        for item in self.rule_list.get_children():
+            self.rule_list.delete(item)
+
+        # Get all rules
+        rules = self.rule_manager.get_all_rules()
+
+        # Add rules to the list
+        for rule in rules:
+            rule_type = "Unknown"
+            for display_name, type_code in self.rule_types:
+                if rule.rule_type == type_code:
+                    rule_type = display_name
+                    break
+
+            enabled = "Yes" if rule.enabled else "No"
+            self.rule_list.insert("", "end", iid=rule.rule_id,
+                                  values=(rule.priority, rule_type, enabled))
+
+    def on_rule_select(self, event):
+        """Handle rule selection in the rule list"""
+        selected_items = self.rule_list.selection()
+        if not selected_items:
+            return
+
+        rule_id = selected_items[0]
+        rule = self.rule_manager.get_rule(rule_id)
+        if not rule:
+            return
+
+        # Store the selected rule
+        self.selected_rule = rule
+
+        # Update the rule editor fields
+        self.rule_name_var.set(rule.name)
+        self.rule_desc_var.set(rule.description)
+        self.rule_priority_var.set(str(rule.priority))
+
+        # Set rule type
+        rule_type_display = "File Name Pattern"
+        for display_name, type_code in self.rule_types:
+            if rule.rule_type == type_code:
+                rule_type_display = display_name
+                break
+        self.rule_type_var.set(rule_type_display)
+
+        # Update condition frame
+        self.update_rule_condition_frame()
+
+        # Set action values
+        self.target_path_var.set(rule.target_path_template)
+        self.should_copy_var.set(rule.should_copy)
+        self.create_summary_var.set(rule.create_summary)
+
+    def update_rule_condition_frame(self, event=None):
+        """Update the condition frame based on the selected rule type"""
+        # Clear existing widgets
+        for widget in self.condition_widgets:
+            widget.destroy()
+        self.condition_widgets = []
+
+        # Get the selected rule type
+        rule_type_display = self.rule_type_var.get()
+        rule_type = "pattern"  # Default
+        for display_name, type_code in self.rule_types:
+            if display_name == rule_type_display:
+                rule_type = type_code
+                break
+
+        # Create condition widgets based on rule type
+        if rule_type == "pattern":
+            # File name pattern condition
+            label = ttk.Label(self.rule_condition_frame,
+                              text="File Name Pattern:")
+            label.grid(row=0, column=0, sticky="w", padx=5, pady=5)
+            self.condition_widgets.append(label)
+
+            self.pattern_var = tk.StringVar()
+            entry = ttk.Entry(self.rule_condition_frame,
+                              textvariable=self.pattern_var, width=40)
+            entry.grid(row=0, column=1, sticky="w", padx=5, pady=5)
+            self.condition_widgets.append(entry)
+
+            help_label = ttk.Label(
+                self.rule_condition_frame, text="(Use regular expressions, e.g. .*\\.pdf for PDF files)")
+            help_label.grid(row=1, column=0, columnspan=2,
+                            sticky="w", padx=5, pady=5)
+            self.condition_widgets.append(help_label)
+
+            self.case_sensitive_var = tk.BooleanVar(value=False)
+            check = ttk.Checkbutton(
+                self.rule_condition_frame, text="Case sensitive", variable=self.case_sensitive_var)
+            check.grid(row=2, column=0, sticky="w", padx=5, pady=5)
+            self.condition_widgets.append(check)
+
+        elif rule_type == "content":
+            # File content condition
+            label = ttk.Label(self.rule_condition_frame,
+                              text="Content Contains:")
+            label.grid(row=0, column=0, sticky="w", padx=5, pady=5)
+            self.condition_widgets.append(label)
+
+            self.content_var = tk.StringVar()
+            entry = ttk.Entry(self.rule_condition_frame,
+                              textvariable=self.content_var, width=40)
+            entry.grid(row=0, column=1, sticky="w", padx=5, pady=5)
+            self.condition_widgets.append(entry)
+
+            self.case_sensitive_var = tk.BooleanVar(value=False)
+            check = ttk.Checkbutton(
+                self.rule_condition_frame, text="Case sensitive", variable=self.case_sensitive_var)
+            check.grid(row=1, column=0, sticky="w", padx=5, pady=5)
+            self.condition_widgets.append(check)
+
+        elif rule_type == "metadata":
+            # Metadata condition
+            label = ttk.Label(self.rule_condition_frame,
+                              text="Metadata Field:")
+            label.grid(row=0, column=0, sticky="w", padx=5, pady=5)
+            self.condition_widgets.append(label)
+
+            self.metadata_field_var = tk.StringVar()
+            metadata_fields = ["file_type", "file_size", "created_time", "modified_time",
+                               "author", "title", "subject", "keywords", "page_count"]
+            combo = ttk.Combobox(self.rule_condition_frame, textvariable=self.metadata_field_var,
+                                 values=metadata_fields, width=20)
+            combo.grid(row=0, column=1, sticky="w", padx=5, pady=5)
+            self.condition_widgets.append(combo)
+
+            label = ttk.Label(self.rule_condition_frame, text="Value:")
+            label.grid(row=1, column=0, sticky="w", padx=5, pady=5)
+            self.condition_widgets.append(label)
+
+            self.metadata_value_var = tk.StringVar()
+            entry = ttk.Entry(self.rule_condition_frame,
+                              textvariable=self.metadata_value_var, width=40)
+            entry.grid(row=1, column=1, sticky="w", padx=5, pady=5)
+            self.condition_widgets.append(entry)
+
+        elif rule_type == "date":
+            # Date condition
+            label = ttk.Label(self.rule_condition_frame, text="Date Field:")
+            label.grid(row=0, column=0, sticky="w", padx=5, pady=5)
+            self.condition_widgets.append(label)
+
+            self.date_field_var = tk.StringVar(value="modified_time")
+            date_fields = ["created_time",
+                           "modified_time", "date_time_original"]
+            combo = ttk.Combobox(self.rule_condition_frame, textvariable=self.date_field_var,
+                                 values=date_fields, width=20)
+            combo.grid(row=0, column=1, sticky="w", padx=5, pady=5)
+            self.condition_widgets.append(combo)
+
+            label = ttk.Label(self.rule_condition_frame, text="Start Date:")
+            label.grid(row=1, column=0, sticky="w", padx=5, pady=5)
+            self.condition_widgets.append(label)
+
+            self.start_date_var = tk.StringVar()
+            entry = ttk.Entry(self.rule_condition_frame,
+                              textvariable=self.start_date_var, width=20)
+            entry.grid(row=1, column=1, sticky="w", padx=5, pady=5)
+            self.condition_widgets.append(entry)
+
+            label = ttk.Label(self.rule_condition_frame, text="End Date:")
+            label.grid(row=2, column=0, sticky="w", padx=5, pady=5)
+            self.condition_widgets.append(label)
+
+            self.end_date_var = tk.StringVar()
+            entry = ttk.Entry(self.rule_condition_frame,
+                              textvariable=self.end_date_var, width=20)
+            entry.grid(row=2, column=1, sticky="w", padx=5, pady=5)
+            self.condition_widgets.append(entry)
+
+            help_label = ttk.Label(
+                self.rule_condition_frame, text="(Format: YYYY-MM-DD)")
+            help_label.grid(row=3, column=0, columnspan=2,
+                            sticky="w", padx=5, pady=5)
+            self.condition_widgets.append(help_label)
+
+        elif rule_type == "tag":
+            # Tag condition
+            label = ttk.Label(self.rule_condition_frame, text="Tag Name:")
+            label.grid(row=0, column=0, sticky="w", padx=5, pady=5)
+            self.condition_widgets.append(label)
+
+            self.tag_var = tk.StringVar()
+            entry = ttk.Entry(self.rule_condition_frame,
+                              textvariable=self.tag_var, width=40)
+            entry.grid(row=0, column=1, sticky="w", padx=5, pady=5)
+            self.condition_widgets.append(entry)
+
+        elif rule_type == "ai":
+            # AI analysis condition
+            label = ttk.Label(self.rule_condition_frame, text="AI Field:")
+            label.grid(row=0, column=0, sticky="w", padx=5, pady=5)
+            self.condition_widgets.append(label)
+
+            self.ai_field_var = tk.StringVar(value="category")
+            ai_fields = ["category", "summary", "sentiment", "key_points"]
+            combo = ttk.Combobox(self.rule_condition_frame, textvariable=self.ai_field_var,
+                                 values=ai_fields, width=20)
+            combo.grid(row=0, column=1, sticky="w", padx=5, pady=5)
+            self.condition_widgets.append(combo)
+
+            label = ttk.Label(self.rule_condition_frame, text="Value:")
+            label.grid(row=1, column=0, sticky="w", padx=5, pady=5)
+            self.condition_widgets.append(label)
+
+            self.ai_value_var = tk.StringVar()
+            entry = ttk.Entry(self.rule_condition_frame,
+                              textvariable=self.ai_value_var, width=40)
+            entry.grid(row=1, column=1, sticky="w", padx=5, pady=5)
+            self.condition_widgets.append(entry)
+
+        elif rule_type == "image":
+            # Image condition
+            label = ttk.Label(self.rule_condition_frame, text="Image Field:")
+            label.grid(row=0, column=0, sticky="w", padx=5, pady=5)
+            self.condition_widgets.append(label)
+
+            self.image_field_var = tk.StringVar(value="dimensions")
+            image_fields = ["dimensions", "format", "has_transparency", "is_animated",
+                            "camera_make", "camera_model", "labels", "objects"]
+            combo = ttk.Combobox(self.rule_condition_frame, textvariable=self.image_field_var,
+                                 values=image_fields, width=20)
+            combo.grid(row=0, column=1, sticky="w", padx=5, pady=5)
+            self.condition_widgets.append(combo)
+
+            label = ttk.Label(self.rule_condition_frame, text="Value:")
+            label.grid(row=1, column=0, sticky="w", padx=5, pady=5)
+            self.condition_widgets.append(label)
+
+            self.image_value_var = tk.StringVar()
+            entry = ttk.Entry(self.rule_condition_frame,
+                              textvariable=self.image_value_var, width=40)
+            entry.grid(row=1, column=1, sticky="w", padx=5, pady=5)
+            self.condition_widgets.append(entry)
+
+    def add_rule(self):
+        """Add a new rule"""
+        # Clear the editor
+        self.selected_rule = None
+        self.rule_name_var.set("New Rule")
+        self.rule_desc_var.set("")
+        self.rule_priority_var.set("100")
+        self.rule_type_var.set("File Name Pattern")
+        self.target_path_var.set("{file_type}/{file_name}")
+        self.should_copy_var.set(True)
+        self.create_summary_var.set(False)
+
+        # Update condition frame
+        self.update_rule_condition_frame()
+
+    def edit_rule(self):
+        """Edit the selected rule"""
+        selected_items = self.rule_list.selection()
+        if not selected_items:
+            messagebox.showinfo("Edit Rule", "Please select a rule to edit")
+            return
+
+        # Rule is already loaded in the editor from on_rule_select
+
+    def delete_rule(self):
+        """Delete the selected rule"""
+        selected_items = self.rule_list.selection()
+        if not selected_items:
+            messagebox.showinfo(
+                "Delete Rule", "Please select a rule to delete")
+            return
+
+        rule_id = selected_items[0]
+        if messagebox.askyesno("Delete Rule", "Are you sure you want to delete this rule?"):
+            if self.rule_manager.delete_rule(rule_id):
+                self.populate_rule_list()
+                messagebox.showinfo("Delete Rule", "Rule deleted successfully")
+            else:
+                messagebox.showerror("Delete Rule", "Failed to delete rule")
+
+    def toggle_rule(self):
+        """Toggle the enabled state of the selected rule"""
+        selected_items = self.rule_list.selection()
+        if not selected_items:
+            messagebox.showinfo(
+                "Toggle Rule", "Please select a rule to toggle")
+            return
+
+        rule_id = selected_items[0]
+        rule = self.rule_manager.get_rule(rule_id)
+        if rule:
+            rule.enabled = not rule.enabled
+            if self.rule_manager.update_rule(rule):
+                self.populate_rule_list()
+            else:
+                messagebox.showerror("Toggle Rule", "Failed to update rule")
+
+    def save_rule(self):
+        """Save the current rule"""
+        # Validate inputs
+        try:
+            priority = int(self.rule_priority_var.get())
+            if priority < 1 or priority > 1000:
+                messagebox.showerror(
+                    "Save Rule", "Priority must be between 1 and 1000")
+                return
+        except ValueError:
+            messagebox.showerror("Save Rule", "Priority must be a number")
+            return
+
+        if not self.rule_name_var.get().strip():
+            messagebox.showerror("Save Rule", "Rule name cannot be empty")
+            return
+
+        if not self.target_path_var.get().strip():
+            messagebox.showerror(
+                "Save Rule", "Target path template cannot be empty")
+            return
+
+        # Get rule type
+        rule_type_display = self.rule_type_var.get()
+        rule_type = "pattern"  # Default
+        for display_name, type_code in self.rule_types:
+            if display_name == rule_type_display:
+                rule_type = type_code
+                break
+
+        # Create or update rule
+        if self.selected_rule:
+            # Update existing rule
+            rule = self.selected_rule
+            rule.name = self.rule_name_var.get()
+            rule.description = self.rule_desc_var.get()
+            rule.priority = priority
+            rule.rule_type = rule_type
+            rule.target_path_template = self.target_path_var.get()
+            rule.should_copy = self.should_copy_var.get()
+            rule.create_summary = self.create_summary_var.get()
+        else:
+            # Create new rule
+            rule = self.rule_manager.create_rule_template("default")
+            rule.name = self.rule_name_var.get()
+            rule.description = self.rule_desc_var.get()
+            rule.priority = priority
+            rule.rule_type = rule_type
+            rule.target_path_template = self.target_path_var.get()
+            rule.should_copy = self.should_copy_var.get()
+            rule.create_summary = self.create_summary_var.get()
+
+        # Set condition based on rule type
+        if rule_type == "pattern":
+            rule.set_name_pattern_condition(
+                self.pattern_var.get(),
+                operator=rule.OP_REGEX,
+                case_sensitive=self.case_sensitive_var.get()
+            )
+        elif rule_type == "content":
+            rule.set_content_condition(
+                self.content_var.get(),
+                operator=rule.OP_CONTAINS,
+                case_sensitive=self.case_sensitive_var.get()
+            )
+        elif rule_type == "metadata":
+            rule.set_metadata_condition(
+                self.metadata_field_var.get(),
+                self.metadata_value_var.get()
+            )
+        elif rule_type == "date":
+            rule.set_date_condition(
+                self.date_field_var.get(),
+                (self.start_date_var.get(), self.end_date_var.get())
+            )
+        elif rule_type == "tag":
+            rule.set_tag_condition(
+                self.tag_var.get()
+            )
+        elif rule_type == "ai":
+            rule.set_ai_analysis_condition(
+                self.ai_field_var.get(),
+                self.ai_value_var.get()
+            )
+        elif rule_type == "image":
+            rule.set_image_condition(
+                self.image_field_var.get(),
+                self.image_value_var.get()
+            )
+
+        # Save rule
+        if self.selected_rule:
+            if self.rule_manager.update_rule(rule):
+                self.populate_rule_list()
+                messagebox.showinfo("Save Rule", "Rule updated successfully")
+            else:
+                messagebox.showerror("Save Rule", "Failed to update rule")
+        else:
+            self.rule_manager.add_rule(rule)
+            self.populate_rule_list()
+            messagebox.showinfo("Save Rule", "Rule created successfully")
+
+    def cancel_rule_edit(self):
+        """Cancel rule editing"""
+        self.selected_rule = None
+        self.rule_name_var.set("")
+        self.rule_desc_var.set("")
+        self.rule_priority_var.set("100")
+        self.rule_type_var.set("File Name Pattern")
+        self.target_path_var.set("")
+        self.should_copy_var.set(True)
+        self.create_summary_var.set(False)
+
+        # Update condition frame
+        self.update_rule_condition_frame()
+
+    def test_rule(self):
+        """Test the current rule against sample files"""
+        # Check if we have analyzed files
+        if not self.analyzed_files:
+            messagebox.showinfo(
+                "Test Rule", "Please scan files first to test the rule")
+            return
+
+        # Create a temporary rule from current settings
+        try:
+            priority = int(self.rule_priority_var.get())
+        except ValueError:
+            priority = 100
+
+        # Get rule type
+        rule_type_display = self.rule_type_var.get()
+        rule_type = "pattern"  # Default
+        for display_name, type_code in self.rule_types:
+            if display_name == rule_type_display:
+                rule_type = type_code
+                break
+
+        # Create temporary rule
+        temp_rule = self.rule_manager.create_rule_template("default")
+        temp_rule.name = self.rule_name_var.get() or "Test Rule"
+        temp_rule.description = self.rule_desc_var.get()
+        temp_rule.priority = priority
+        temp_rule.rule_type = rule_type
+        temp_rule.target_path_template = self.target_path_var.get(
+        ) or "{file_type}/{file_name}"
+
+        # Set condition based on rule type
+        try:
+            if rule_type == "pattern":
+                temp_rule.set_name_pattern_condition(
+                    self.pattern_var.get(),
+                    operator=temp_rule.OP_REGEX,
+                    case_sensitive=self.case_sensitive_var.get()
+                )
+            elif rule_type == "content":
+                temp_rule.set_content_condition(
+                    self.content_var.get(),
+                    operator=temp_rule.OP_CONTAINS,
+                    case_sensitive=self.case_sensitive_var.get()
+                )
+            elif rule_type == "metadata":
+                temp_rule.set_metadata_condition(
+                    self.metadata_field_var.get(),
+                    self.metadata_value_var.get()
+                )
+            elif rule_type == "date":
+                temp_rule.set_date_condition(
+                    self.date_field_var.get(),
+                    (self.start_date_var.get(), self.end_date_var.get())
+                )
+            elif rule_type == "tag":
+                temp_rule.set_tag_condition(
+                    self.tag_var.get()
+                )
+            elif rule_type == "ai":
+                temp_rule.set_ai_analysis_condition(
+                    self.ai_field_var.get(),
+                    self.ai_value_var.get()
+                )
+            elif rule_type == "image":
+                temp_rule.set_image_condition(
+                    self.image_field_var.get(),
+                    self.image_value_var.get()
+                )
+        except Exception as e:
+            messagebox.showerror(
+                "Test Rule", f"Error creating test rule: {str(e)}")
+            return
+
+        # Test rule against analyzed files
+        matching_files = []
+        for file_info in self.analyzed_files:
+            if temp_rule.matches(file_info):
+                matching_files.append(file_info)
+
+        # Show results
+        if matching_files:
+            result_text = f"Rule matches {len(matching_files)} files:\n\n"
+            for file_info in matching_files[:10]:  # Show first 10 matches
+                result_text += f"- {file_info['file_name']}\n"
+
+            if len(matching_files) > 10:
+                result_text += f"\n... and {len(matching_files) - 10} more files"
+
+            messagebox.showinfo("Test Rule Results", result_text)
+        else:
+            messagebox.showinfo("Test Rule Results",
+                                "No files match this rule")
+
+    def import_rules(self):
+        """Import rules from a file"""
+        file_path = filedialog.askopenfilename(
+            title="Import Rules",
+            filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")]
+        )
+
+        if file_path:
+            if self.rule_manager.load_rules(file_path):
+                self.populate_rule_list()
+                messagebox.showinfo(
+                    "Import Rules", "Rules imported successfully")
+            else:
+                messagebox.showerror("Import Rules", "Failed to import rules")
+
+    def export_rules(self):
+        """Export rules to a file"""
+        file_path = filedialog.asksaveasfilename(
+            title="Export Rules",
+            defaultextension=".json",
+            filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")]
+        )
+
+        if file_path:
+            if self.rule_manager.save_rules(file_path):
+                messagebox.showinfo(
+                    "Export Rules", "Rules exported successfully")
+            else:
+                messagebox.showerror("Export Rules", "Failed to export rules")
+
+    # Image handling methods
+    def search_images(self):
+        """Search for images based on the search text"""
+        search_text = self.image_search_var.get().lower()
+        if not search_text:
+            self.filter_images()
+            return
+
+        # Filter the analyzed files to find images matching the search text
+        self.display_images([
+            file_info for file_info in self.analyzed_files
+            if file_info.get("is_image", False) and search_text in file_info.get("file_name", "").lower()
+        ])
+
+    def filter_images(self, event=None):
+        """Filter images based on selected criteria"""
+        if not self.analyzed_files:
+            messagebox.showinfo("Filter Images", "Please scan files first")
+            return
+
+        # Get filter criteria
+        image_type = self.image_type_var.get()
+        date_from = self.image_date_from_var.get()
+        date_to = self.image_date_to_var.get()
+        content = self.image_content_var.get().lower()
+
+        # Filter images
+        filtered_images = []
+        for file_info in self.analyzed_files:
+            if not file_info.get("is_image", False):
+                continue
+
+            # Filter by image type
+            if image_type != "All":
+                file_ext = file_info.get("file_ext", "").lower()
+                if image_type.lower() not in file_ext:
+                    continue
+
+            # Filter by date range
+            if date_from or date_to:
+                # Get image date
+                image_date = None
+                if "metadata" in file_info and "date_time_original" in file_info["metadata"]:
+                    try:
+                        date_str = file_info["metadata"]["date_time_original"]
+                        # Parse date in format "YYYY:MM:DD HH:MM:SS"
+                        parts = date_str.split(" ")[0].split(":")
+                        image_date = f"{parts[0]}-{parts[1]}-{parts[2]}"
+                    except:
+                        pass
+
+                if not image_date:
+                    # Use file modified date as fallback
+                    modified_time = file_info.get("modified_time", 0)
+                    image_date = time.strftime(
+                        "%Y-%m-%d", time.localtime(modified_time))
+
+                # Check date range
+                if date_from and image_date < date_from:
+                    continue
+                if date_to and image_date > date_to:
+                    continue
+
+            # Filter by content
+            if content:
+                # Check image analysis for content labels
+                content_match = False
+                if "image_analysis" in file_info and "labels" in file_info["image_analysis"]:
+                    for label in file_info["image_analysis"]["labels"]:
+                        if content in label.lower():
+                            content_match = True
+                            break
+
+                if not content_match:
+                    continue
+
+            # Image passed all filters
+            filtered_images.append(file_info)
+
+        # Display filtered images
+        self.display_images(filtered_images)
+
+    def sort_images(self, event=None):
+        """Sort images based on selected criteria"""
+        if not hasattr(self, "current_images") or not self.current_images:
+            return
+
+        sort_by = self.image_sort_var.get()
+
+        if sort_by == "Date (Newest)":
+            self.current_images.sort(key=lambda x: x.get(
+                "modified_time", 0), reverse=True)
+        elif sort_by == "Date (Oldest)":
+            self.current_images.sort(key=lambda x: x.get("modified_time", 0))
+        elif sort_by == "Name":
+            self.current_images.sort(
+                key=lambda x: x.get("file_name", "").lower())
+        elif sort_by == "Size":
+            self.current_images.sort(
+                key=lambda x: x.get("file_size", 0), reverse=True)
+
+        # Redisplay images
+        self.display_images(self.current_images)
+
+    def update_thumbnail_size(self, event=None):
+        """Update thumbnail size based on selection"""
+        size = self.thumbnail_size_var.get()
+
+        if size == "Small":
+            self.image_analyzer.set_thumbnail_size(100, 100)
+        elif size == "Medium":
+            self.image_analyzer.set_thumbnail_size(200, 200)
+        elif size == "Large":
+            self.image_analyzer.set_thumbnail_size(300, 300)
+
+        # Redisplay images if we have any
+        if hasattr(self, "current_images") and self.current_images:
+            self.display_images(self.current_images)
+
+    def display_images(self, image_files):
+        """Display images in the grid"""
+        # Store current images
+        self.current_images = image_files
+
+        # Clear existing images
+        for widget in self.image_grid.winfo_children():
+            widget.destroy()
+
+        # Clear image references
+        self.image_references = []
+        self.selected_images = []
+
+        # Update count
+        self.image_count_var.set(f"{len(image_files)} images found")
+
+        if not image_files:
+            # Show "no images" message
+            ttk.Label(self.image_grid, text="No images found matching the criteria").grid(
+                row=0, column=0, padx=20, pady=20)
+            return
+
+        # Determine grid dimensions
+        size = self.thumbnail_size_var.get()
+        if size == "Small":
+            cols = 6
+            thumb_size = 100
+        elif size == "Medium":
+            cols = 4
+            thumb_size = 200
+        else:  # Large
+            cols = 3
+            thumb_size = 300
+
+        # Create image thumbnails
+        for i, file_info in enumerate(image_files):
+            row = i // cols
+            col = i % cols
+
+            # Create frame for image
+            image_frame = ttk.Frame(self.image_grid, padding=5)
+            image_frame.grid(row=row, column=col, padx=5, pady=5)
+
+            # Get or generate thumbnail
+            thumbnail_path = None
+            if "image_analysis" in file_info and "thumbnail_path" in file_info["image_analysis"]:
+                thumbnail_path = file_info["image_analysis"]["thumbnail_path"]
+
+            if not thumbnail_path or not os.path.exists(thumbnail_path):
+                # Generate thumbnail
+                try:
+                    thumbnail_path = self.image_analyzer._generate_thumbnail(
+                        file_info["file_path"])
+                except:
+                    thumbnail_path = None
+
+            # Display thumbnail or placeholder
+            if thumbnail_path and os.path.exists(thumbnail_path):
+                try:
+                    # Load image and resize
+                    img = Image.open(thumbnail_path)
+                    img.thumbnail((thumb_size, thumb_size))
+                    photo = ImageTk.PhotoImage(img)
+
+                    # Store reference to prevent garbage collection
+                    self.image_references.append(photo)
+
+                    # Create label with image
+                    img_label = ttk.Label(image_frame, image=photo)
+                    img_label.pack(pady=2)
+
+                    # Bind click event
+                    img_label.bind(
+                        "<Button-1>", lambda e, fi=file_info: self.toggle_image_selection(e, fi))
+                except Exception as e:
+                    ttk.Label(image_frame, text="Error loading image").pack(
+                        pady=2)
+            else:
+                ttk.Label(image_frame, text="No thumbnail").pack(pady=2)
+
+            # Add filename label
+            filename = file_info.get("file_name", "")
+            if len(filename) > 20:
+                filename = filename[:17] + "..."
+            ttk.Label(image_frame, text=filename).pack(pady=2)
+
+    def toggle_image_selection(self, event, file_info):
+        """Toggle selection of an image"""
+        widget = event.widget
+
+        # Check if image is already selected
+        if file_info in self.selected_images:
+            # Deselect
+            self.selected_images.remove(file_info)
+            widget.configure(style="TLabel")  # Reset style
+        else:
+            # Select
+            self.selected_images.append(file_info)
+            # Create a selected style if it doesn't exist
+            try:
+                self.style.configure("Selected.TLabel", background="#4a6984")
+                widget.configure(style="Selected.TLabel")
+            except:
+                # Fallback if style doesn't work
+                widget.configure(background="#4a6984")
+
+    def analyze_selected_images(self):
+        """Analyze selected images with AI vision"""
+        if not self.selected_images:
+            messagebox.showinfo(
+                "Analyze Images", "Please select images to analyze")
+            return
+
+        # Check if vision API is enabled
+        if not self.settings_manager.get_setting("image_analysis.vision_api_enabled", False):
+            result = messagebox.askyesno(
+                "Vision API Not Enabled",
+                "The Vision API is not enabled in settings. Would you like to enable it now?"
+            )
+            if result:
+                # Switch to settings tab
+                self.notebook.select(self.settings_tab)
+                return
+            else:
+                return
+
+        # Get API key
+        api_key = self.settings_manager.get_api_key("vision")
+        if not api_key:
+            messagebox.showinfo(
+                "API Key Required",
+                "Please set your Vision API key in the settings tab"
+            )
+            return
+
+        # Configure image analyzer
+        provider = self.settings_manager.get_setting(
+            "image_analysis.vision_api_provider", "google")
+        self.image_analyzer.set_vision_api(provider, api_key)
+
+        # Start analysis in a thread
+        self.running = True
+        self.cancel_requested = False
+        threading.Thread(target=self.analyze_images_thread,
+                         daemon=True).start()
+
+    def analyze_images_thread(self):
+        """Thread for analyzing images"""
+        try:
+            total = len(self.selected_images)
+
+            for i, file_info in enumerate(self.selected_images):
+                if self.cancel_requested:
+                    self.queue.put(("cancelled", None))
+                    break
+
+                # Update status
+                self.queue.put(
+                    ("progress", (i, total, f"Analyzing {file_info['file_name']}...")))
+
+                # Analyze image
+                try:
+                    result = self.image_analyzer.analyze_image(
+                        file_info["file_path"])
+
+                    # Update file info with analysis results
+                    file_info["image_analysis"] = result
+
+                    # Update status
+                    self.queue.put(
+                        ("progress", (i+1, total, f"Analyzed {file_info['file_name']}")))
+                except Exception as e:
+                    self.queue.put(
+                        ("error", f"Error analyzing {file_info['file_name']}: {str(e)}"))
+
+            # Refresh display
+            self.queue.put(("refresh_images", None))
+
+        except Exception as e:
+            self.queue.put(("error", str(e)))
+        finally:
+            self.queue.put(("complete", None))
+
+    def organize_selected_images(self):
+        """Organize selected images"""
+        if not self.selected_images:
+            messagebox.showinfo("Organize Images",
+                                "Please select images to organize")
+            return
+
+        # Get target directory
+        target_dir = self.target_dir.get()
+        if not target_dir:
+            target_dir = filedialog.askdirectory(
+                title="Select Target Directory")
+            if not target_dir:
+                return
+            self.target_dir.set(target_dir)
+
+        # Get organization options
+        options = {
+            "create_category_folders": self.create_category_folders_var.get(),
+            "generate_summaries": self.generate_summaries_var.get(),
+            "include_metadata": self.include_metadata_var.get(),
+            "copy_instead_of_move": self.copy_instead_of_move_var.get(),
+            "detect_duplicates": self.detect_duplicates_var.get(),
+            "duplicate_action": self.duplicate_action_var.get(),
+            "duplicate_strategy": self.duplicate_strategy_var.get(),
+            "apply_tags": self.apply_tags_var.get(),
+            "suggest_tags": self.suggest_tags_var.get(),
+            "use_custom_rules": self.use_custom_rules_var.get(),
+            "rules_file": self.rules_file_var.get()
+        }
+
+        # Start organization in a thread
+        self.running = True
+        self.cancel_requested = False
+        threading.Thread(target=self.organize_images_thread,
+                         args=(self.selected_images, target_dir, options),
+                         daemon=True).start()
+
+    def organize_images_thread(self, images, target_dir, options):
+        """Thread for organizing images"""
+        try:
+            # Define progress callback
+            def progress_callback(current, total, filename):
+                self.queue.put(("progress", (current, total, filename)))
+                return not self.cancel_requested
+
+            # Organize files
+            result = self.file_organizer.organize_files(
+                images, target_dir, progress_callback, options)
+
+            # Show results
+            message = (
+                f"Organization complete:\n"
+                f"- {result['organized_files']} files organized\n"
+                f"- {result['skipped_files']} files skipped\n"
+                f"- {result['duplicate_files']} duplicate files\n"
+                f"- {result['error_files']} errors"
+            )
+            self.queue.put(("success", message))
+
+        except Exception as e:
+            self.queue.put(("error", str(e)))
+        finally:
+            self.queue.put(("complete", None))

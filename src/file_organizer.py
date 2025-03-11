@@ -7,14 +7,20 @@ import logging
 
 from .utils import sanitize_filename
 from .ai_analyzer import AIAnalyzer
+from .duplicate_detector import DuplicateDetector
+from .tag_manager import TagManager
+
 
 class FileOrganizer:
     """
     Class responsible for organizing files based on AI analysis
     """
+
     def __init__(self):
         self.logger = logging.getLogger(__name__)
         self.ai_analyzer = AIAnalyzer()
+        self.duplicate_detector = DuplicateDetector()
+        self.tag_manager = TagManager()
 
     def organize_files(self, analyzed_files, target_dir, callback=None, options=None):
         """
@@ -29,6 +35,11 @@ class FileOrganizer:
                 - generate_summaries: Whether to generate content summary files (default: True)
                 - include_metadata: Whether to create metadata files (default: True)
                 - copy_instead_of_move: Whether to copy files instead of moving them (default: True)
+                - detect_duplicates: Whether to detect and handle duplicates (default: False)
+                - duplicate_action: Action to take for duplicates ('report', 'move', 'delete') (default: 'report')
+                - duplicate_strategy: Strategy for keeping files ('newest', 'oldest', 'largest', 'smallest') (default: 'newest')
+                - apply_tags: Whether to apply tags to files (default: False)
+                - suggest_tags: Whether to suggest tags based on content (default: False)
 
         Returns:
             Dictionary with organization results
@@ -38,7 +49,12 @@ class FileOrganizer:
             "create_category_folders": True,
             "generate_summaries": True,
             "include_metadata": True,
-            "copy_instead_of_move": True
+            "copy_instead_of_move": True,
+            "detect_duplicates": False,
+            "duplicate_action": "report",
+            "duplicate_strategy": "newest",
+            "apply_tags": False,
+            "suggest_tags": False
         }
 
         # Use provided options or defaults
@@ -58,7 +74,12 @@ class FileOrganizer:
             "organized_count": 0,
             "failed_count": 0,
             "failed_files": [],
-            "categories": {}
+            "categories": {},
+            "processed": [],
+            "metadata_files": [],
+            "summary_files": [],
+            "errors": [],
+            "duplicates": {}
         }
 
         total_files = len(analyzed_files)
@@ -68,7 +89,8 @@ class FileOrganizer:
             try:
                 # Check if operation was cancelled
                 if callback:
-                    should_continue = callback(index, total_files, file_info.get("path", "Unknown file"))
+                    should_continue = callback(
+                        index, total_files, file_info.get("path", "Unknown file"))
                     if should_continue is False:
                         self.logger.info("Organization cancelled by user")
                         break
@@ -126,20 +148,69 @@ class FileOrganizer:
                 if options["generate_summaries"]:
                     self._create_summary_file(file_info, target_path)
 
+                # Apply tags if requested
+                if options['apply_tags']:
+                    # Apply category as a tag
+                    if category and category != 'Uncategorized':
+                        self.tag_manager.add_tag_to_file(
+                            target_path, category, confidence=1.0, is_ai_suggested=False)
+
+                    # Apply AI-suggested tags if available
+                    if 'tags' in file_info and file_info['tags']:
+                        for tag in file_info['tags']:
+                            self.tag_manager.add_tag_to_file(
+                                target_path, tag, confidence=0.9, is_ai_suggested=True)
+
+                    # Suggest additional tags based on content if requested
+                    if options['suggest_tags']:
+                        tag_suggestions = self.tag_manager.get_tag_suggestions(
+                            file_info)
+                        # Limit to top 5 suggestions
+                        for suggestion in tag_suggestions[:5]:
+                            self.tag_manager.add_tag_to_file(
+                                target_path,
+                                suggestion['name'],
+                                confidence=suggestion['confidence'],
+                                is_ai_suggested=True
+                            )
+
                 # Update success count
                 results["organized_count"] += 1
 
                 # Update progress
                 if callback:
-                    should_continue = callback(index + 1, total_files, file_path)
+                    should_continue = callback(
+                        index + 1, total_files, file_path)
                     if should_continue is False:
                         self.logger.info("Organization cancelled by user")
                         break
 
             except Exception as e:
-                self.logger.error(f"Error organizing file {file_info.get('path')}: {str(e)}")
+                self.logger.error(
+                    f"Error organizing file {file_info.get('path')}: {str(e)}")
                 results["failed_count"] += 1
                 results["failed_files"].append(file_info.get("path"))
+
+        # Detect and handle duplicates if requested
+        if options['detect_duplicates']:
+            # Get all processed files
+            processed_files = [result['target']
+                               for result in results['processed']]
+
+            # Detect duplicates
+            duplicate_groups = self.duplicate_detector.find_duplicates(
+                processed_files)
+
+            if duplicate_groups:
+                # Handle duplicates
+                duplicate_results = self.duplicate_detector.handle_duplicates(
+                    duplicate_groups,
+                    action=options['duplicate_action'],
+                    target_dir=os.path.join(target_dir, 'Duplicates'),
+                    keep_strategy=options['duplicate_strategy']
+                )
+
+                results['duplicates'] = duplicate_results
 
         return results
 
@@ -174,9 +245,12 @@ class FileOrganizer:
                 if 'related_documents' in file_info and file_info['related_documents']:
                     f.write("\nRelated Documents:\n")
                     for doc in file_info['related_documents'][:3]:  # Limit to top 3
-                        rel_strength = doc.get('relationship_strength', 'medium')
-                        rel_explanation = doc.get('relationship_explanation', '')
-                        f.write(f"- {doc.get('filename', '')}: {rel_strength.capitalize()} relationship")
+                        rel_strength = doc.get(
+                            'relationship_strength', 'medium')
+                        rel_explanation = doc.get(
+                            'relationship_explanation', '')
+                        f.write(
+                            f"- {doc.get('filename', '')}: {rel_strength.capitalize()} relationship")
                         if rel_explanation:
                             f.write(f" - {rel_explanation}")
                         f.write("\n")
@@ -186,7 +260,8 @@ class FileOrganizer:
                     for key, value in file_info['metadata'].items():
                         f.write(f"- {key}: {value}\n")
         except Exception as e:
-            self.logger.error(f"Error creating metadata file for {target_path}: {str(e)}")
+            self.logger.error(
+                f"Error creating metadata file for {target_path}: {str(e)}")
 
     def _create_summary_file(self, file_info, target_path):
         """
@@ -209,11 +284,13 @@ class FileOrganizer:
                     f.write(f"Category: {file_info['category']}\n")
 
                 if 'keywords' in file_info and file_info['keywords']:
-                    f.write(f"Keywords: {', '.join(file_info['keywords'])}\n\n")
+                    f.write(
+                        f"Keywords: {', '.join(file_info['keywords'])}\n\n")
 
                 # Add the main summary content
                 if 'summary' in file_info and file_info['summary']:
-                    f.write(f"## Content Summary\n\n{file_info['summary']}\n\n")
+                    f.write(
+                        f"## Content Summary\n\n{file_info['summary']}\n\n")
                 else:
                     f.write("No summary available for this file.\n\n")
 
@@ -221,21 +298,26 @@ class FileOrganizer:
                 if 'related_documents' in file_info and file_info['related_documents']:
                     f.write("## Related Documents\n\n")
                     for doc in file_info['related_documents'][:3]:  # Limit to top 3
-                        rel_strength = doc.get('relationship_strength', 'medium')
-                        rel_explanation = doc.get('relationship_explanation', '')
-                        f.write(f"- **{doc.get('filename', '')}**: {rel_strength.capitalize()} relationship")
+                        rel_strength = doc.get(
+                            'relationship_strength', 'medium')
+                        rel_explanation = doc.get(
+                            'relationship_explanation', '')
+                        f.write(
+                            f"- **{doc.get('filename', '')}**: {rel_strength.capitalize()} relationship")
                         if rel_explanation:
                             f.write(f"\n  {rel_explanation}")
                         f.write("\n\n")
 
                 # Add AI analysis note
                 f.write("---\n")
-                f.write("Generated by AI Document Organizer using Google Gemini Flash 2.0\n")
+                f.write(
+                    "Generated by AI Document Organizer using Google Gemini Flash 2.0\n")
                 f.write(f"Date: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
 
             self.logger.info(f"Created summary file: {summary_path}")
         except Exception as e:
-            self.logger.error(f"Error creating summary file for {target_path}: {str(e)}")
+            self.logger.error(
+                f"Error creating summary file for {target_path}: {str(e)}")
 
     def generate_folder_report(self, folder_path, include_summaries=True):
         """
@@ -250,7 +332,8 @@ class FileOrganizer:
         """
         try:
             if not os.path.exists(folder_path) or not os.path.isdir(folder_path):
-                self.logger.error(f"Invalid folder path for report: {folder_path}")
+                self.logger.error(
+                    f"Invalid folder path for report: {folder_path}")
                 return None
 
             # Get the folder name for the report title
@@ -265,7 +348,8 @@ class FileOrganizer:
             # Walk through the directory structure
             for root, dirs, files in os.walk(folder_path):
                 # Skip metadata and summary files
-                files = [f for f in files if not f.endswith('.meta.txt') and not f.endswith('_summary.txt') and not f.endswith('_Report.md')]
+                files = [f for f in files if not f.endswith('.meta.txt') and not f.endswith(
+                    '_summary.txt') and not f.endswith('_Report.md')]
 
                 for file in files:
                     total_files += 1
@@ -282,7 +366,8 @@ class FileOrganizer:
                             meta_content = mf.read()
 
                             # Extract category
-                            category_match = re.search(r'Category:\s*(.+?)$', meta_content, re.MULTILINE)
+                            category_match = re.search(
+                                r'Category:\s*(.+?)$', meta_content, re.MULTILINE)
                             if category_match:
                                 category = category_match.group(1).strip()
                                 file_info["category"] = category
@@ -294,14 +379,16 @@ class FileOrganizer:
                                     category_stats[category] = 1
 
                             # Extract keywords
-                            keywords_match = re.search(r'Keywords:\s*(.+?)$', meta_content, re.MULTILINE)
+                            keywords_match = re.search(
+                                r'Keywords:\s*(.+?)$', meta_content, re.MULTILINE)
                             if keywords_match:
                                 keywords = keywords_match.group(1).strip()
                                 file_info["keywords"] = keywords
 
                             # Extract summary if needed
                             if include_summaries:
-                                summary_match = re.search(r'Summary:\s*\n(.*?)(?:\n\n|\nMetadata:|$)', meta_content, re.DOTALL)
+                                summary_match = re.search(
+                                    r'Summary:\s*\n(.*?)(?:\n\n|\nMetadata:|$)', meta_content, re.DOTALL)
                                 if summary_match:
                                     summary = summary_match.group(1).strip()
                                     file_info["summary"] = summary
@@ -312,7 +399,8 @@ class FileOrganizer:
             with open(report_path, 'w', encoding='utf-8') as f:
                 # Report header
                 f.write(f"# Folder Content Report: {folder_name}\n\n")
-                f.write(f"Generated on: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                f.write(
+                    f"Generated on: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
                 f.write(f"Total files: {total_files}\n\n")
 
                 # Category statistics
@@ -320,7 +408,8 @@ class FileOrganizer:
                 if category_stats:
                     for category, count in sorted(category_stats.items(), key=lambda x: x[1], reverse=True):
                         percentage = (count / total_files) * 100
-                        f.write(f"- **{category}**: {count} files ({percentage:.1f}%)\n")
+                        f.write(
+                            f"- **{category}**: {count} files ({percentage:.1f}%)\n")
                 else:
                     f.write("No category information available.\n")
 
@@ -353,7 +442,8 @@ class FileOrganizer:
                 # Document relationships section (if we have enough documents)
                 if len(file_data) > 1:
                     f.write("\n## Document Relationships\n\n")
-                    f.write("This section shows the relationships between documents based on content analysis.\n\n")
+                    f.write(
+                        "This section shows the relationships between documents based on content analysis.\n\n")
 
                     # Process document relationships for important documents
                     max_relationships = min(5, len(file_data))
@@ -363,7 +453,8 @@ class FileOrganizer:
                     primary_docs = []
                     for category in category_stats:
                         # Get documents from this category
-                        category_docs = [doc for doc in file_data if doc.get("category", "") == category]
+                        category_docs = [doc for doc in file_data if doc.get(
+                            "category", "") == category]
                         if category_docs:
                             # Add the first document from each category to analyze
                             primary_docs.append(category_docs[0])
@@ -382,7 +473,8 @@ class FileOrganizer:
                     for primary_doc in primary_docs:
                         # Convert keywords string to list if needed
                         if "keywords" in primary_doc and isinstance(primary_doc["keywords"], str):
-                            primary_doc["keywords"] = [k.strip() for k in primary_doc["keywords"].split(",")]
+                            primary_doc["keywords"] = [
+                                k.strip() for k in primary_doc["keywords"].split(",")]
 
                         # Find similar documents for this primary document
                         try:
@@ -390,29 +482,36 @@ class FileOrganizer:
                                 primary_doc, file_data, max_results=3)
 
                             if similar_docs:
-                                f.write(f"### Related to: {primary_doc['filename']}\n\n")
+                                f.write(
+                                    f"### Related to: {primary_doc['filename']}\n\n")
                                 if "category" in primary_doc:
-                                    f.write(f"Category: {primary_doc.get('category', 'Unknown')}\n\n")
+                                    f.write(
+                                        f"Category: {primary_doc.get('category', 'Unknown')}\n\n")
 
                                 # List related documents
                                 for i, doc in enumerate(similar_docs):
                                     score = doc.get("similarity_score", 0)
                                     similarity = "High" if score >= 5 else "Medium" if score >= 3 else "Low"
-                                    f.write(f"{i+1}. **{doc.get('filename', '')}** - {similarity} similarity\n")
+                                    f.write(
+                                        f"{i+1}. **{doc.get('filename', '')}** - {similarity} similarity\n")
                                     if "relationship_explanation" in doc:
-                                        f.write(f"   - {doc.get('relationship_explanation', '')}\n")
+                                        f.write(
+                                            f"   - {doc.get('relationship_explanation', '')}\n")
                                 f.write("\n")
 
                                 relationships_analyzed += 1
                         except Exception as e:
-                            self.logger.error(f"Error analyzing relationships for {primary_doc.get('filename', '')}: {str(e)}")
+                            self.logger.error(
+                                f"Error analyzing relationships for {primary_doc.get('filename', '')}: {str(e)}")
 
                     if relationships_analyzed == 0:
-                        f.write("No significant relationships found between documents.\n\n")
+                        f.write(
+                            "No significant relationships found between documents.\n\n")
 
                 # Footer
                 f.write("\n## About this Report\n\n")
-                f.write("This report was automatically generated by AI Document Organizer using Google Gemini Flash 2.0 AI analysis.\n")
+                f.write(
+                    "This report was automatically generated by AI Document Organizer using Google Gemini Flash 2.0 AI analysis.\n")
                 f.write("The content categorization, relationships, and summaries are AI-generated and may require human verification for critical information.\n")
 
             self.logger.info(f"Generated folder report: {report_path}")

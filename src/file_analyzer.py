@@ -28,7 +28,8 @@ class FileAnalyzer:
             '.html': 'HTML',
             '.md': 'Markdown',
             '.txt': 'Text',
-            '.docx': 'Word'
+            '.docx': 'Word',
+            '.pdf': 'PDF'
         }
 
         # Default batch processing settings

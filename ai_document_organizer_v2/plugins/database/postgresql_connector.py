@@ -6,6 +6,7 @@ a robust, full-featured relational database solution.
 """
 
 import os
+import re
 import sys
 import logging
 import json
@@ -900,7 +901,7 @@ class PostgreSQLConnectorPlugin(DatabaseConnectorPlugin):
                 "error": str(e)
             }
     
-    def backup_database(self, backup_path: str) -> bool:
+    def backup_database(self, backup_path: str, tables: Optional[List[str]] = None) -> bool:
         """
         Create a backup of the database.
         Note: This is a basic implementation that generates SQL statements.
@@ -908,6 +909,7 @@ class PostgreSQLConnectorPlugin(DatabaseConnectorPlugin):
         
         Args:
             backup_path: Path to save the backup file
+            tables: Optional list of specific tables to backup. If None, backs up all tables.
             
         Returns:
             True if backup was successful, False otherwise
@@ -916,7 +918,8 @@ class PostgreSQLConnectorPlugin(DatabaseConnectorPlugin):
             schema = self.config["schema"]
             
             # Get list of tables to backup
-            tables = self.get_tables()
+            if tables is None:
+                tables = self.get_tables()
             
             with open(backup_path, 'w') as backup_file:
                 # Write header
@@ -939,9 +942,50 @@ class PostgreSQLConnectorPlugin(DatabaseConnectorPlugin):
                     # Generate CREATE TABLE statement
                     backup_file.write(f"DROP TABLE IF EXISTS {schema}.{table} CASCADE;\n")
                     
+                    # First, identify any sequences needed for auto-increment fields and create them
+                    sequences_to_create = []
+                    
+                    for col_name, col_info in table_schema['columns'].items():
+                        default_value = col_info.get("default")
+                        if default_value and 'nextval' in str(default_value):
+                            # Extract sequence name from nextval expression
+                            # Example: nextval('table_id_seq'::regclass)
+                            match = re.search(r"nextval\('([^']+)'", str(default_value))
+                            if match:
+                                sequence_name = match.group(1)
+                                # Only add non-duplicate sequences
+                                if sequence_name not in [seq['name'] for seq in sequences_to_create]:
+                                    sequences_to_create.append({
+                                        'name': sequence_name,
+                                        'column': col_name,
+                                        'type': col_info["type"].split('(')[0]  # Use base type
+                                    })
+                    
+                    # Create sequences before the table
+                    for seq in sequences_to_create:
+                        backup_file.write(f"CREATE SEQUENCE IF NOT EXISTS {seq['name']};\n")
+                    backup_file.write("\n")
+                    
                     columns_list = []
                     for col_name, col_info in table_schema['columns'].items():
-                        col_def = f'"{col_name}" {col_info["type"]}'
+                        # Get PostgreSQL compatible type
+                        col_type = col_info["type"]
+                        
+                        # Fix type format for PostgreSQL
+                        # Convert INTEGER(32,0) to INTEGER, etc.
+                        if '(' in col_type:
+                            base_type = col_type.split('(')[0]
+                            # Map to proper PostgreSQL types
+                            if base_type in ['INTEGER', 'BIGINT', 'SMALLINT']:
+                                col_type = base_type
+                            elif base_type == 'CHARACTER VARYING':
+                                # Keep the length for VARCHAR
+                                pass
+                            elif base_type == 'NUMERIC' or base_type == 'DECIMAL':
+                                # Keep precision and scale for NUMERIC/DECIMAL
+                                pass
+                        
+                        col_def = f'"{col_name}" {col_type}'
                         
                         if not col_info.get("nullable", True):
                             col_def += " NOT NULL"
@@ -963,6 +1007,14 @@ class PostgreSQLConnectorPlugin(DatabaseConnectorPlugin):
                     backup_file.write(create_table)
                     
                     # Get table data
+                    # First, identify JSON/JSONB columns in the table
+                    json_columns = {}
+                    for column_name, column_info in table_schema['columns'].items():
+                        column_type = column_info['type'].lower()
+                        if column_type in ('json', 'jsonb'):
+                            json_columns[column_name] = column_type
+                    
+                    # Get the table data
                     data_result = self.execute_query(f'SELECT * FROM "{schema}"."{table}"')
                     
                     if data_result['rows']:
@@ -970,11 +1022,12 @@ class PostgreSQLConnectorPlugin(DatabaseConnectorPlugin):
                         
                         for row in data_result['rows']:
                             # Generate INSERT statement
-                            columns = ", ".join([f'"{col}"' for col in row.keys()])
+                            column_names = list(row.keys())
+                            columns = ", ".join([f'"{col}"' for col in column_names])
                             
                             # Format values appropriately
                             values = []
-                            for val in row.values():
+                            for i, (col_name, val) in enumerate(row.items()):
                                 if val is None:
                                     values.append("NULL")
                                 elif isinstance(val, (int, float)):
@@ -982,9 +1035,30 @@ class PostgreSQLConnectorPlugin(DatabaseConnectorPlugin):
                                 elif isinstance(val, bool):
                                     values.append(str(val).upper())
                                 else:
-                                    # Escape single quotes in string values
-                                    val_str = str(val).replace("'", "''")
-                                    values.append(f"'{val_str}'")
+                                    # Check if this is a JSON column or has JSON data
+                                    is_json_col = col_name in json_columns
+                                    is_json_data = isinstance(val, (dict, list))
+                                    
+                                    if is_json_col or is_json_data:
+                                        # For JSON columns or data, use proper JSON formatting
+                                        if isinstance(val, (dict, list)):
+                                            # Serialize the dict or list to proper JSON
+                                            json_str = json.dumps(val).replace("'", "''")
+                                            values.append(f"'{json_str}'::jsonb")
+                                        else:
+                                            # It might be a JSON string already
+                                            try:
+                                                # Validate it's properly formatted JSON
+                                                json.loads(val)
+                                                values.append(f"'{val}'::jsonb")
+                                            except:
+                                                # Not valid JSON, treat as string
+                                                val_str = str(val).replace("'", "''")
+                                                values.append(f"'{val_str}'")
+                                    else:
+                                        # Escape single quotes in string values
+                                        val_str = str(val).replace("'", "''")
+                                        values.append(f"'{val_str}'")
                             
                             values_str = ", ".join(values)
                             backup_file.write(f"INSERT INTO {schema}.{table} ({columns}) VALUES ({values_str});\n")
@@ -1051,19 +1125,189 @@ class PostgreSQLConnectorPlugin(DatabaseConnectorPlugin):
             with open(backup_path, 'r') as backup_file:
                 sql_script = backup_file.read()
             
-            # Split script into statements
+            # Log some basic info about the backup file
+            logger.info(f"Backup file size: {os.path.getsize(backup_path)} bytes")
+            logger.info(f"First 500 characters of backup file: {sql_script[:500]}...")
+            
+            # Split script into statements while preserving comments
             # This is a simple approach and may not work for all SQL scripts
-            statements = [stmt.strip() for stmt in sql_script.split(';') if stmt.strip()]
+            statements = []
+            current_statement = []
+            for line in sql_script.split('\n'):
+                line = line.strip()
+                if not line or line.startswith('--'):
+                    # Skip empty lines and comments
+                    continue
+                    
+                current_statement.append(line)
+                if line.endswith(';'):
+                    statements.append(' '.join(current_statement))
+                    current_statement = []
             
-            # Execute statements in a transaction
-            with self.transaction():
-                for statement in statements:
-                    if statement and not statement.startswith('--'):
+            # Add the last statement if there's one without semicolon
+            if current_statement:
+                statements.append(' '.join(current_statement))
+                
+            # Log some info about what we extracted
+            if len(statements) == 0:
+                logger.warning("No SQL statements found in backup file!")
+            else:
+                logger.info(f"First statement: {statements[0][:200]}...")
+            
+            # Make sure sequences are created before they are referenced in tables
+            # and tables are created before inserts
+            sequence_statements = []
+            table_statements = []
+            insert_statements = []
+            other_statements = []
+            
+            logger.info(f"Total SQL statements from backup: {len(statements)}")
+            
+            for statement in statements:
+                stmt_upper = statement.strip().upper()
+                if stmt_upper.startswith('CREATE SEQUENCE'):
+                    sequence_statements.append(statement)
+                elif stmt_upper.startswith('CREATE TABLE'):
+                    table_statements.append(statement)
+                elif stmt_upper.startswith('INSERT INTO'):
+                    insert_statements.append(statement)
+                else:
+                    other_statements.append(statement)
+                    
+            logger.info(f"Categorized statements - Sequences: {len(sequence_statements)}, Tables: {len(table_statements)}, Inserts: {len(insert_statements)}, Other: {len(other_statements)}")
+            
+            # Execute statements in separate transactions for better error handling
+            # First, execute schema and sequence statements, which should be outside transactions
+            for statement in other_statements:
+                if "CREATE SCHEMA" in statement.upper():
+                    statement = statement.strip()
+                    if statement:
+                        try:
+                            # Remove trailing semicolon for execution
+                            if statement.endswith(';'):
+                                statement = statement[:-1]
+                            self.execute_query(statement)
+                            logger.info(f"Successfully executed schema statement")
+                        except Exception as stmt_error:
+                            # Schema statements might fail if schema already exists, that's ok
+                            logger.warning(f"Schema statement warning: {stmt_error}")
+                            logger.warning(f"Statement: {statement}")
+            
+            # Execute sequence statements
+            logger.info(f"Executing {len(sequence_statements)} sequence statements")
+            for i, statement in enumerate(sequence_statements):
+                statement = statement.strip()
+                if statement:
+                    try:
+                        # Remove trailing semicolon for execution
+                        if statement.endswith(';'):
+                            statement = statement[:-1]
+                        result = self.execute_query(statement)
+                        logger.info(f"Sequence statement {i+1}/{len(sequence_statements)} executed successfully")
+                    except Exception as stmt_error:
+                        logger.error(f"Error executing sequence statement: {stmt_error}")
+                        logger.error(f"Statement: {statement}")
+                        # Don't raise, try to continue with other statements
+            
+            # Execute DROP TABLE statements first 
+            drop_statements = [stmt for stmt in other_statements if stmt.upper().startswith('DROP TABLE')]
+            logger.info(f"Executing {len(drop_statements)} DROP TABLE statements")
+            for i, statement in enumerate(drop_statements):
+                statement = statement.strip()
+                if statement:
+                    try:
+                        # Remove trailing semicolon for execution
+                        if statement.endswith(';'):
+                            statement = statement[:-1]
+                        result = self.execute_query(statement)
+                        logger.info(f"DROP TABLE statement {i+1}/{len(drop_statements)} executed successfully")
+                    except Exception as stmt_error:
+                        logger.error(f"Error executing DROP TABLE statement: {stmt_error}")
+                        logger.error(f"Statement: {statement}")
+                        # Don't raise, try to continue with other statements
+            
+            # Execute table creation statements
+            logger.info(f"Executing {len(table_statements)} table statements")
+            for i, statement in enumerate(table_statements):
+                statement = statement.strip()
+                if statement:
+                    try:
+                        # Remove trailing semicolon for execution
+                        if statement.endswith(';'):
+                            statement = statement[:-1]
+                        result = self.execute_query(statement)
+                        logger.info(f"Table statement {i+1}/{len(table_statements)} executed successfully")
+                    except Exception as stmt_error:
+                        logger.error(f"Error executing table statement: {stmt_error}")
+                        logger.error(f"Statement: {statement}")
+                        # Don't raise, try to continue with other statements
+            
+            # Execute INSERT statements in a transaction
+            if insert_statements:
+                logger.info(f"Executing {len(insert_statements)} INSERT statements in transaction")
+                try:
+                    with self.transaction():
+                        for i, statement in enumerate(insert_statements):
+                            statement = statement.strip()
+                            if statement:
+                                try:
+                                    # Remove trailing semicolon for execution
+                                    if statement.endswith(';'):
+                                        statement = statement[:-1]
+                                    self.execute_query(statement)
+                                    logger.info(f"INSERT statement {i+1}/{len(insert_statements)} executed successfully")
+                                except Exception as stmt_error:
+                                    logger.error(f"Error executing insert statement {i+1}: {stmt_error}")
+                                    logger.error(f"Statement: {statement}")
+                                    raise
+                except Exception as tx_error:
+                    logger.error(f"Transaction error during INSERT statements: {tx_error}")
+                    # We don't re-raise here to allow the restore process to continue
+                    # even if some data couldn't be inserted
+                    logger.warning("Continuing restore process despite INSERT errors")
+            
+            # Execute remaining statements (indexes, constraints, etc.)
+            remaining_statements = [stmt for stmt in other_statements 
+                                   if not stmt.upper().startswith('DROP TABLE') 
+                                   and not "CREATE SCHEMA" in stmt.upper()]
+            
+            logger.info(f"Executing {len(remaining_statements)} other statements")
+            for i, statement in enumerate(remaining_statements):
+                statement = statement.strip()
+                if statement:
+                    try:
+                        # Remove trailing semicolon for execution
+                        if statement.endswith(';'):
+                            statement = statement[:-1]
                         self.execute_query(statement)
+                    except Exception as stmt_error:
+                        logger.error(f"Error executing statement: {stmt_error}")
+                        logger.error(f"Statement: {statement}")
+                        # Don't raise, try to continue with other statements
             
+            # Verify that tables were actually created
+            restored_tables = []
+            for statement in table_statements:
+                # Extract table name from CREATE TABLE statement
+                match = re.search(r'CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:public\.)?([^\s\(]+)', statement, re.IGNORECASE)
+                if match:
+                    table_name = match.group(1).strip('"')
+                    restored_tables.append(table_name)
+            
+            # Check if tables exist now
+            existing_tables = self.get_tables()
+            missing_tables = [table for table in restored_tables if table not in existing_tables]
+            
+            if missing_tables:
+                logger.error(f"Tables not created after restore: {missing_tables}")
+                return False
+                
+            logger.info(f"Successfully restored {len(restored_tables)} tables: {restored_tables}")
             return True
         except Exception as e:
             logger.error(f"Failed to restore database: {e}")
+            logger.error(f"Exception type: {type(e).__name__}")
+            logger.error(f"Exception details: {str(e)}")
             return False
     
     def get_connection_string(self) -> str:

@@ -597,9 +597,9 @@ def test_backup_restore():
         for row in original_data["rows"]:
             print(f"ID: {row['id']}, Name: {row['name']}, Data: {row['data']}")
         
-        # Create backup
+        # Create backup (only for this specific table)
         print(f"\nCreating backup to {backup_file}...")
-        backup_result = connector.backup_database(backup_file)
+        backup_result = connector.backup_database(backup_file, tables=[table_name])
         print(f"Backup result: {backup_result}")
         
         # Drop the table

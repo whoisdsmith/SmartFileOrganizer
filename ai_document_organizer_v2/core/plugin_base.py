@@ -1,62 +1,162 @@
 """
-Plugin Base Module for AI Document Organizer V2.
+Base class for plugins in the AI Document Organizer V2.
 
-This module defines the base classes for the plugin system,
-providing a flexible architecture for extending functionality.
+All plugins should inherit from this class.
 """
 
-import logging
 from abc import ABC, abstractmethod
-from typing import Dict, List, Any, Optional, Tuple, Union, TYPE_CHECKING
+from typing import Any, Dict, List, Optional
 
-if TYPE_CHECKING:
-    from .settings import SettingsManager
-
-logger = logging.getLogger(__name__)
 
 class PluginBase(ABC):
     """
-    Base class for all plugins in the AI Document Organizer.
+    Abstract base class for all plugins in the system.
     
-    This abstract class defines the common interface and functionality
-    that all plugins must implement, ensuring consistency across
-    different plugin types.
+    This class defines the interface that all plugins must implement.
     """
     
-    # Class attributes that should be overridden by subclasses
-    plugin_name = "base_plugin"
-    plugin_description = "Base plugin class"
+    plugin_name = "plugin_base"
     plugin_version = "1.0.0"
-    plugin_type = "base"
+    plugin_description = "Base class for plugins"
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         """
-        Initialize the plugin with optional configuration.
+        Initialize the plugin.
         
         Args:
             config: Optional configuration dictionary
         """
         self.config = config or {}
-        self.settings_manager: Optional['SettingsManager'] = None
+        self.enabled = False
     
+    @abstractmethod
     def initialize(self) -> bool:
         """
-        Initialize the plugin. Override this method for custom initialization.
+        Initialize the plugin. This is called after the plugin is loaded.
         
         Returns:
             True if initialization was successful, False otherwise
         """
-        return True
+        pass
     
+    @abstractmethod
     def shutdown(self) -> bool:
         """
-        Shutdown the plugin and release resources. Override this method
-        for custom shutdown logic.
+        Shutdown the plugin. This is called before the plugin is unloaded.
         
         Returns:
             True if shutdown was successful, False otherwise
         """
+        pass
+    
+    def activate(self) -> bool:
+        """
+        Activate the plugin. This is called when the plugin is enabled.
+        
+        Returns:
+            True if activation was successful, False otherwise
+        """
+        self.enabled = True
         return True
+    
+    def deactivate(self) -> bool:
+        """
+        Deactivate the plugin. This is called when the plugin is disabled.
+        
+        Returns:
+            True if deactivation was successful, False otherwise
+        """
+        self.enabled = False
+        return True
+    
+    def get_name(self) -> str:
+        """
+        Get the plugin name.
+        
+        Returns:
+            Plugin name
+        """
+        return self.plugin_name
+    
+    def get_version(self) -> str:
+        """
+        Get the plugin version.
+        
+        Returns:
+            Plugin version
+        """
+        return self.plugin_version
+    
+    def get_description(self) -> str:
+        """
+        Get the plugin description.
+        
+        Returns:
+            Plugin description
+        """
+        return self.plugin_description
+    
+    def get_type(self) -> str:
+        """
+        Get the plugin type.
+        
+        Returns:
+            Plugin type
+        """
+        return "base"
+    
+    def get_capabilities(self) -> List[str]:
+        """
+        Get the plugin capabilities.
+        
+        Returns:
+            List of capability strings
+        """
+        return []
+    
+    def get_config(self) -> Dict[str, Any]:
+        """
+        Get the plugin configuration.
+        
+        Returns:
+            Plugin configuration dictionary
+        """
+        return self.config
+    
+    def set_config(self, config: Dict[str, Any]) -> bool:
+        """
+        Set the plugin configuration.
+        
+        Args:
+            config: Configuration dictionary
+            
+        Returns:
+            True if configuration was set successfully, False otherwise
+        """
+        self.config = config
+        return True
+    
+    def update_config(self, config_updates: Dict[str, Any]) -> bool:
+        """
+        Update the plugin configuration with the provided updates.
+        
+        Args:
+            config_updates: Dictionary with configuration updates
+            
+        Returns:
+            True if configuration was updated successfully, False otherwise
+        """
+        self.config.update(config_updates)
+        return True
+    
+    def is_enabled(self) -> bool:
+        """
+        Check if the plugin is enabled.
+        
+        Returns:
+            True if the plugin is enabled, False otherwise
+        """
+        return self.enabled
     
     def get_info(self) -> Dict[str, Any]:
         """
@@ -67,64 +167,34 @@ class PluginBase(ABC):
         """
         return {
             "name": self.plugin_name,
-            "description": self.plugin_description,
             "version": self.plugin_version,
-            "type": self.plugin_type
+            "description": self.plugin_description,
+            "type": self.get_type(),
+            "capabilities": self.get_capabilities(),
+            "enabled": self.is_enabled()
         }
     
-    def is_compatible(self, version: str) -> bool:
+    def validate_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Check if the plugin is compatible with a specific version.
-        
-        Args:
-            version: Version string to check compatibility with
-            
-        Returns:
-            True if compatible, False otherwise
-        """
-        # Basic implementation - should be overridden for version-specific checks
-        return True
-    
-    def configure(self, config: Dict[str, Any]) -> bool:
-        """
-        Configure the plugin with new settings.
-        
-        Args:
-            config: Configuration dictionary
-            
-        Returns:
-            True if configuration was successful, False otherwise
-        """
-        self.config.update(config)
-        return True
-    
-    def get_config(self) -> Dict[str, Any]:
-        """
-        Get the current plugin configuration.
-        
-        Returns:
-            Dictionary with current configuration
-        """
-        return self.config
-    
-    def get_default_config(self) -> Dict[str, Any]:
-        """
-        Get the default plugin configuration.
-        
-        Returns:
-            Dictionary with default configuration values
-        """
-        return {}
-    
-    def validate_config(self, config: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
-        """
-        Validate a configuration dictionary.
+        Validate a configuration dictionary for this plugin.
         
         Args:
             config: Configuration dictionary to validate
             
         Returns:
-            Tuple of (is_valid, error_message)
+            Dictionary with validation results, including any errors
         """
-        # Basic implementation - should be overridden for specific validation
-        return True, None
+        # Base implementation just returns success
+        return {
+            "valid": True,
+            "errors": []
+        }
+    
+    def __str__(self) -> str:
+        """
+        String representation of the plugin.
+        
+        Returns:
+            String representation
+        """
+        return f"{self.plugin_name} (v{self.plugin_version}): {self.plugin_description}"

@@ -168,7 +168,11 @@ The External API Integration Framework implementation has begun following the su
 - Extension Points:
   - ✅ Custom API integration plugin support
   - ✅ Configuration-driven API connections
-  - ☐ Runtime API discovery and negotiation
+  - ✅ Runtime API discovery and negotiation:
+    - ✅ API capability detection and management
+    - ✅ Dynamic capability negotiation between client and API
+    - ✅ Capability-based feature adaptation
+    - ✅ Missing capability handling with alternatives
   - ✅ Response transformation pipelines:
     - ✅ Multi-stage transformation pipeline
     - ✅ JSON-based transformation configuration
@@ -196,6 +200,7 @@ Some aspects of metadata management have been implemented in the database connec
    - ✅ Implement caching system for performance optimization
    - ✅ Create response transformation pipelines
    - ✅ Add document-oriented API plugins (translation, extraction)
+   - ✅ Implement runtime API discovery and negotiation system
 
 2. **Enhance Cloud Storage Framework**
    - ✅ Add additional cloud providers (OneDrive, Dropbox, Box)

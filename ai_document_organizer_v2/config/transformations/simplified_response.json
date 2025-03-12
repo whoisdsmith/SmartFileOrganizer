@@ -1,0 +1,41 @@
+{
+  "name": "simplified_response",
+  "description": "Simplify complex API responses for easier consumption",
+  "stages": [
+    {
+      "type": "filter",
+      "mode": "include",
+      "fields": [
+        "id",
+        "name",
+        "description",
+        "created_at",
+        "updated_at",
+        "data"
+      ]
+    },
+    {
+      "type": "map",
+      "mode": "template",
+      "template": {
+        "id": "${id}",
+        "title": "${name}",
+        "description": "${description}",
+        "metadata": {
+          "created": "${created_at}",
+          "updated": "${updated_at}"
+        },
+        "content": "${data}"
+      }
+    },
+    {
+      "type": "enrich",
+      "mode": "metadata",
+      "metadata": {
+        "version": "1.0",
+        "source": "api",
+        "transformed": true
+      }
+    }
+  ]
+}

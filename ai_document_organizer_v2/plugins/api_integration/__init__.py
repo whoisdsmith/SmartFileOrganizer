@@ -13,6 +13,7 @@ Key features:
 - Webhook support for event-driven architecture
 - Polling for services without push capabilities
 - Batch processing for efficiency
+- Runtime API capabilities discovery and negotiation
 """
 
 from .api_plugin_base import APIPluginBase
@@ -23,6 +24,13 @@ from .plugin_manager import APIPluginManager
 from .webhook_manager import WebhookManager, WebhookHandler
 from .polling_manager import PollingManager, PollingJob
 from .batch_processor import BatchProcessor, BatchJob
+from .api_capabilities import (
+    APICapability, 
+    APICapabilityRegistry, 
+    CapabilitySet, 
+    APICapabilityNegotiator,
+    CapabilityCategory
+)
 
 
 __all__ = [
@@ -36,5 +44,10 @@ __all__ = [
     'PollingManager',
     'PollingJob',
     'BatchProcessor',
-    'BatchJob'
+    'BatchJob',
+    'APICapability',
+    'APICapabilityRegistry',
+    'CapabilitySet',
+    'APICapabilityNegotiator',
+    'CapabilityCategory'
 ]

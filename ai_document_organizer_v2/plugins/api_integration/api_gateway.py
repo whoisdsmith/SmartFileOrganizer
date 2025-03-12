@@ -9,13 +9,14 @@ and plugin registration.
 import logging
 import time
 import threading
-from typing import Any, Dict, List, Optional, Union, Set
+from typing import Any, Dict, List, Optional, Union, Set, Tuple
 
 from .api_plugin_base import APIPluginBase
 from .rate_limiter import RateLimiter
 from .auth_provider import AuthenticationProvider
 from .cache_manager import CacheManager
 from .transformer import TransformationManager
+from .api_capabilities import CapabilitySet, APICapabilityNegotiator, APICapabilityRegistry
 
 
 logger = logging.getLogger(__name__)
@@ -56,10 +57,17 @@ class APIGateway:
         self.plugins = {}  # type: Dict[str, APIPluginBase]
         self.plugin_status = {}  # type: Dict[str, Dict[str, Any]]
         
+        # Capability registry and negotiator
+        self.capability_registry = APICapabilityRegistry()
+        self.capability_negotiator = APICapabilityNegotiator(self.capability_registry)
+        
+        # Plugin capabilities cache
+        self.plugin_capabilities = {}  # type: Dict[str, CapabilitySet]
+        
         # Thread safety
         self._lock = threading.RLock()
         
-        logger.info("API Gateway initialized with caching and transformation capabilities")
+        logger.info("API Gateway initialized with caching, transformation, and capability negotiation features")
     
     def register_plugin(self, plugin: APIPluginBase) -> bool:
         """
@@ -102,6 +110,14 @@ class APIGateway:
                         plugin.rate_limit_rules
                     )
                 
+                # Discover and cache plugin capabilities
+                try:
+                    capabilities = plugin.get_capabilities()
+                    self.plugin_capabilities[plugin_name] = capabilities
+                    logger.debug(f"Discovered {len(capabilities.capability_names)} capabilities for plugin {plugin_name}")
+                except Exception as e:
+                    logger.warning(f"Failed to discover initial capabilities for plugin {plugin_name}: {e}")
+                
                 logger.info(f"Registered plugin {plugin_name} for API {api_name}")
                 return True
                 
@@ -143,6 +159,10 @@ class APIGateway:
             # Unregister from rate limiter if needed
             if plugin.requires_rate_limiting:
                 self.rate_limiter.unregister_api(plugin.api_name)
+            
+            # Remove plugin capabilities
+            if plugin_name in self.plugin_capabilities:
+                del self.plugin_capabilities[plugin_name]
             
             logger.info(f"Unregistered plugin {plugin_name}")
             return True
@@ -653,3 +673,219 @@ class APIGateway:
             True if save was successful, False otherwise
         """
         return self.transform_manager.save_pipeline_config(name)
+        
+    def discover_plugin_capabilities(self, plugin_name: str, force_refresh: bool = False) -> Optional[CapabilitySet]:
+        """
+        Discover the capabilities of a plugin.
+        
+        Args:
+            plugin_name: Name of the plugin to query
+            force_refresh: Whether to force a refresh of cached capabilities
+            
+        Returns:
+            CapabilitySet of discovered capabilities or None on failure
+        """
+        plugin = self.get_plugin(plugin_name)
+        
+        if not plugin:
+            logger.error(f"Plugin {plugin_name} is not registered")
+            return None
+            
+        # Check cache first unless force refresh is requested
+        if not force_refresh and plugin_name in self.plugin_capabilities:
+            logger.debug(f"Using cached capabilities for plugin {plugin_name}")
+            return self.plugin_capabilities[plugin_name]
+            
+        try:
+            # First try to discover remote capabilities
+            remote_capabilities = plugin.discover_remote_capabilities()
+            
+            # If remote discovery failed, fall back to plugin-declared capabilities
+            if not remote_capabilities:
+                logger.info(f"Using plugin-declared capabilities for {plugin_name}")
+                capabilities = plugin.get_capabilities()
+            else:
+                logger.info(f"Using remotely discovered capabilities for {plugin_name}")
+                capabilities = remote_capabilities
+                
+            # Cache the capabilities
+            with self._lock:
+                self.plugin_capabilities[plugin_name] = capabilities
+                
+            return capabilities
+            
+        except Exception as e:
+            logger.error(f"Error discovering capabilities for plugin {plugin_name}: {e}")
+            return None
+            
+    def negotiate_capabilities(self, 
+                              plugin_name: str, 
+                              required_capabilities: CapabilitySet) -> Dict[str, Any]:
+        """
+        Negotiate capabilities between client requirements and plugin capabilities.
+        
+        Args:
+            plugin_name: Name of the plugin to negotiate with
+            required_capabilities: CapabilitySet of capabilities required by the client
+            
+        Returns:
+            Dictionary with negotiation results:
+            {
+                'success': bool,
+                'supported': List[str],  # Supported capability names
+                'missing': List[str],    # Missing capability names
+                'alternatives': Dict[str, List[str]]  # Alternative capabilities
+                'plugin_capabilities': List[str]  # All plugin capabilities
+            }
+        """
+        plugin = self.get_plugin(plugin_name)
+        
+        if not plugin:
+            logger.error(f"Plugin {plugin_name} is not registered")
+            return {
+                'success': False,
+                'error': f"Plugin {plugin_name} is not registered",
+                'supported': [],
+                'missing': list(required_capabilities.capability_names),
+                'alternatives': {},
+                'plugin_capabilities': []
+            }
+            
+        # Discover plugin capabilities
+        plugin_capabilities = self.discover_plugin_capabilities(plugin_name)
+        
+        if not plugin_capabilities:
+            logger.error(f"Failed to discover capabilities for plugin {plugin_name}")
+            return {
+                'success': False,
+                'error': f"Failed to discover capabilities for plugin {plugin_name}",
+                'supported': [],
+                'missing': list(required_capabilities.capability_names),
+                'alternatives': {},
+                'plugin_capabilities': []
+            }
+            
+        # Negotiate capabilities
+        is_compatible, negotiated_capabilities, missing = self.capability_negotiator.negotiate_capabilities(
+            plugin_capabilities, required_capabilities
+        )
+        
+        # Get alternative capabilities for missing ones
+        alternatives = {}
+        for cap in missing:
+            alternatives[cap] = plugin._get_alternative_capabilities(cap)
+            
+        return {
+            'success': is_compatible,
+            'supported': negotiated_capabilities.get_capability_names(),
+            'missing': missing,
+            'alternatives': alternatives,
+            'plugin_capabilities': plugin_capabilities.get_capability_names()
+        }
+        
+    def get_all_plugin_capabilities(self) -> Dict[str, List[str]]:
+        """
+        Get capabilities for all registered plugins.
+        
+        Returns:
+            Dictionary mapping plugin names to lists of capability names
+        """
+        result = {}
+        
+        for plugin_name in self.plugins:
+            capabilities = self.discover_plugin_capabilities(plugin_name)
+            if capabilities:
+                result[plugin_name] = capabilities.get_capability_names()
+            else:
+                result[plugin_name] = []
+                
+        return result
+        
+    def find_plugins_with_capability(self, capability_name: str) -> List[str]:
+        """
+        Find plugins that support a specific capability.
+        
+        Args:
+            capability_name: Name of the capability to search for
+            
+        Returns:
+            List of plugin names that support the capability
+        """
+        supporting_plugins = []
+        
+        for plugin_name in self.plugins:
+            capabilities = self.discover_plugin_capabilities(plugin_name)
+            if capabilities and capabilities.has_capability(capability_name):
+                supporting_plugins.append(plugin_name)
+                
+        return supporting_plugins
+        
+    def find_plugins_with_capabilities(self, required_capabilities: CapabilitySet) -> List[Dict[str, Any]]:
+        """
+        Find plugins that support all the required capabilities.
+        
+        Args:
+            required_capabilities: CapabilitySet of required capabilities
+            
+        Returns:
+            List of dictionaries with plugin information:
+            [
+                {
+                    'plugin_name': str,
+                    'compatibility': float,  # 0.0-1.0 compatibility score
+                    'missing': List[str]     # Missing capability names
+                }
+            ]
+        """
+        results = []
+        
+        for plugin_name in self.plugins:
+            capabilities = self.discover_plugin_capabilities(plugin_name)
+            
+            if not capabilities:
+                continue
+                
+            # Check compatibility
+            is_compatible, _, missing = self.capability_negotiator.negotiate_capabilities(
+                capabilities, required_capabilities
+            )
+            
+            # Calculate compatibility score (percentage of supported capabilities)
+            required_count = len(required_capabilities.capability_names)
+            missing_count = len(missing)
+            
+            if required_count > 0:
+                compatibility = 1.0 - (missing_count / required_count)
+            else:
+                compatibility = 1.0
+                
+            results.append({
+                'plugin_name': plugin_name,
+                'compatibility': compatibility,
+                'missing': missing
+            })
+            
+        # Sort by compatibility (highest first)
+        results.sort(key=lambda x: x['compatibility'], reverse=True)
+        
+        return results
+        
+    def clear_capability_cache(self, plugin_name: Optional[str] = None) -> bool:
+        """
+        Clear the capability cache for a plugin or all plugins.
+        
+        Args:
+            plugin_name: Optional name of the plugin to clear the cache for
+            
+        Returns:
+            True if cache was cleared, False otherwise
+        """
+        with self._lock:
+            if plugin_name:
+                if plugin_name in self.plugin_capabilities:
+                    del self.plugin_capabilities[plugin_name]
+                    return True
+                return False
+            else:
+                self.plugin_capabilities.clear()
+                return True

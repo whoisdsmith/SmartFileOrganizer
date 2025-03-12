@@ -1,96 +1,52 @@
 """
-API Capabilities Module for External API Integration Framework.
+API Capability Negotiation Module for AI Document Organizer V2.
 
-This module provides classes and utilities for runtime API capabilities discovery 
-and negotiation, allowing the application to adapt to different API versions
-and feature sets at runtime.
+This module implements the API capability discovery and negotiation system,
+allowing the application to dynamically adapt to different API providers
+based on their available features and capabilities.
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
-from enum import Enum
+import json
+import re
+import os
+from enum import Enum, auto
+from typing import Dict, List, Set, Any, Optional, Union, Tuple
 
 logger = logging.getLogger(__name__)
 
-
-class CapabilityCategory(Enum):
-    """Enumeration of API capability categories."""
-    AUTHENTICATION = "authentication"
-    DATA_FORMAT = "data_format"
-    OPERATIONS = "operations"
-    PERFORMANCE = "performance"
-    INTEGRATION = "integration"
-    SECURITY = "security"
-    COMPLIANCE = "compliance"
-    EXTENSION = "extension"
+class CapabilityLevel(Enum):
+    """Enum representing capability support levels."""
+    REQUIRED = auto()     # Feature must be supported
+    PREFERRED = auto()    # Feature is preferred but not required
+    OPTIONAL = auto()     # Feature is optional
+    UNSUPPORTED = auto()  # Feature is not supported
 
 
 class APICapability:
     """
-    Represents a single API capability with its properties and requirements.
+    Class representing an API capability with metadata.
     """
     
-    def __init__(self, 
-                name: str, 
-                category: Union[CapabilityCategory, str],
-                description: str = "",
-                version_introduced: Optional[str] = None,
-                version_deprecated: Optional[str] = None,
-                required_capabilities: Optional[List[str]] = None,
-                properties: Optional[Dict[str, Any]] = None):
+    def __init__(self, name: str, description: str = "", 
+                level: CapabilityLevel = CapabilityLevel.OPTIONAL,
+                version: Optional[str] = None,
+                parameters: Optional[Dict[str, Any]] = None):
         """
         Initialize an API capability.
         
         Args:
-            name: Unique identifier for the capability
-            category: Category of the capability
-            description: Human-readable description of the capability
-            version_introduced: API version where this capability was introduced
-            version_deprecated: API version where this capability was deprecated
-            required_capabilities: List of other capabilities required by this one
-            properties: Additional properties describing the capability
+            name: Name of the capability
+            description: Description of the capability
+            level: Support level for the capability
+            version: Optional version information for the capability
+            parameters: Optional parameters for the capability
         """
         self.name = name
-        
-        if isinstance(category, str):
-            try:
-                self.category = CapabilityCategory(category)
-            except ValueError:
-                self.category = CapabilityCategory.EXTENSION
-                logger.warning(f"Unknown capability category '{category}', using EXTENSION")
-        else:
-            self.category = category
-            
         self.description = description
-        self.version_introduced = version_introduced
-        self.version_deprecated = version_deprecated
-        self.required_capabilities = required_capabilities or []
-        self.properties = properties or {}
-    
-    def is_available_in_version(self, version: str) -> bool:
-        """
-        Check if the capability is available in the specified API version.
-        
-        Args:
-            version: API version to check against
-            
-        Returns:
-            True if the capability is available in the specified version
-        """
-        if not self.version_introduced:
-            return True
-            
-        if not version:
-            return False
-            
-        # Simple version comparison - can be enhanced with semver
-        if self.version_introduced and version < self.version_introduced:
-            return False
-            
-        if self.version_deprecated and version >= self.version_deprecated:
-            return False
-            
-        return True
+        self.level = level
+        self.version = version
+        self.parameters = parameters or {}
     
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -100,13 +56,11 @@ class APICapability:
             Dictionary representation of the capability
         """
         return {
-            'name': self.name,
-            'category': self.category.value,
-            'description': self.description,
-            'version_introduced': self.version_introduced,
-            'version_deprecated': self.version_deprecated,
-            'required_capabilities': self.required_capabilities,
-            'properties': self.properties
+            "name": self.name,
+            "description": self.description,
+            "level": self.level.name,
+            "version": self.version,
+            "parameters": self.parameters
         }
     
     @classmethod
@@ -115,562 +69,787 @@ class APICapability:
         Create a capability from a dictionary representation.
         
         Args:
-            data: Dictionary representation of the capability
+            data: Dictionary representation of a capability
             
         Returns:
             New APICapability instance
         """
+        # Convert level string to enum
+        level_str = data.get("level", "OPTIONAL")
+        try:
+            level = CapabilityLevel[level_str]
+        except KeyError:
+            logger.warning(f"Unknown capability level '{level_str}', defaulting to OPTIONAL")
+            level = CapabilityLevel.OPTIONAL
+        
         return cls(
-            name=data.get('name', ''),
-            category=data.get('category', CapabilityCategory.EXTENSION.value),
-            description=data.get('description', ''),
-            version_introduced=data.get('version_introduced'),
-            version_deprecated=data.get('version_deprecated'),
-            required_capabilities=data.get('required_capabilities', []),
-            properties=data.get('properties', {})
+            name=data["name"],
+            description=data.get("description", ""),
+            level=level,
+            version=data.get("version"),
+            parameters=data.get("parameters", {})
         )
     
-    def __str__(self) -> str:
-        """String representation of the capability."""
-        return f"{self.name} ({self.category.value})"
+    def __eq__(self, other):
+        """Compare capabilities by name."""
+        if isinstance(other, APICapability):
+            return self.name == other.name
+        return False
     
-    def __eq__(self, other) -> bool:
-        """Check if two capabilities are equal."""
-        if not isinstance(other, APICapability):
-            return False
-        return self.name == other.name and self.category == other.category
-    
-    def __hash__(self) -> int:
-        """Hash function for the capability."""
-        return hash((self.name, self.category))
+    def __hash__(self):
+        """Hash capability by name."""
+        return hash(self.name)
 
 
-class APICapabilityRegistry:
+class CapabilityRegistry:
     """
-    Registry for tracking and managing API capabilities.
+    Registry for API capabilities that manages capability definitions
+    and capability set operations.
     """
     
     def __init__(self):
-        """Initialize the API capability registry."""
-        self.capabilities = {}  # type: Dict[str, APICapability]
-        self.standard_capabilities = self._create_standard_capabilities()
-        
-        # Register standard capabilities
-        for cap in self.standard_capabilities:
-            self.register_capability(cap)
+        """Initialize an empty capability registry."""
+        self._capabilities: Dict[str, APICapability] = {}
     
-    def _create_standard_capabilities(self) -> List[APICapability]:
+    def register_capability(self, capability: APICapability) -> None:
         """
-        Create a list of standard capabilities common across many APIs.
-        
-        Returns:
-            List of standard APICapability instances
-        """
-        return [
-            # Authentication capabilities
-            APICapability(
-                name="auth:api_key",
-                category=CapabilityCategory.AUTHENTICATION,
-                description="API Key Authentication"
-            ),
-            APICapability(
-                name="auth:oauth2",
-                category=CapabilityCategory.AUTHENTICATION,
-                description="OAuth 2.0 Authentication"
-            ),
-            APICapability(
-                name="auth:jwt",
-                category=CapabilityCategory.AUTHENTICATION,
-                description="JWT Authentication"
-            ),
-            
-            # Data format capabilities
-            APICapability(
-                name="format:json",
-                category=CapabilityCategory.DATA_FORMAT,
-                description="JSON Data Format"
-            ),
-            APICapability(
-                name="format:xml",
-                category=CapabilityCategory.DATA_FORMAT,
-                description="XML Data Format"
-            ),
-            APICapability(
-                name="format:binary",
-                category=CapabilityCategory.DATA_FORMAT,
-                description="Binary Data Format"
-            ),
-            
-            # Integration capabilities
-            APICapability(
-                name="integration:webhooks",
-                category=CapabilityCategory.INTEGRATION,
-                description="Webhook Support"
-            ),
-            APICapability(
-                name="integration:streaming",
-                category=CapabilityCategory.INTEGRATION,
-                description="Streaming Data Support"
-            ),
-            APICapability(
-                name="integration:batch",
-                category=CapabilityCategory.INTEGRATION,
-                description="Batch Operation Support"
-            ),
-            
-            # Performance capabilities
-            APICapability(
-                name="performance:caching",
-                category=CapabilityCategory.PERFORMANCE,
-                description="Response Caching Support"
-            ),
-            APICapability(
-                name="performance:rate_limited",
-                category=CapabilityCategory.PERFORMANCE,
-                description="API is rate limited"
-            ),
-            
-            # Security capabilities
-            APICapability(
-                name="security:request_signing",
-                category=CapabilityCategory.SECURITY,
-                description="Request Signing Support"
-            ),
-            APICapability(
-                name="security:encryption",
-                category=CapabilityCategory.SECURITY,
-                description="Payload Encryption Support"
-            )
-        ]
-    
-    def register_capability(self, capability: APICapability) -> bool:
-        """
-        Register a capability with the registry.
+        Register a capability in the registry.
         
         Args:
-            capability: APICapability instance to register
-            
-        Returns:
-            True if registration was successful, False otherwise
+            capability: The capability to register
         """
-        if not isinstance(capability, APICapability):
-            logger.error(f"Cannot register non-APICapability object: {capability}")
-            return False
-            
-        self.capabilities[capability.name] = capability
-        return True
+        self._capabilities[capability.name] = capability
+        logger.debug(f"Registered capability: {capability.name}")
     
-    def unregister_capability(self, capability_name: str) -> bool:
-        """
-        Unregister a capability from the registry.
-        
-        Args:
-            capability_name: Name of the capability to unregister
-            
-        Returns:
-            True if unregistration was successful, False otherwise
-        """
-        if capability_name in self.capabilities:
-            del self.capabilities[capability_name]
-            return True
-        return False
-    
-    def get_capability(self, capability_name: str) -> Optional[APICapability]:
+    def get_capability(self, name: str) -> Optional[APICapability]:
         """
         Get a capability by name.
         
         Args:
-            capability_name: Name of the capability to retrieve
+            name: Name of the capability to retrieve
             
         Returns:
-            APICapability instance or None if not found
+            The capability if it exists, None otherwise
         """
-        return self.capabilities.get(capability_name)
+        return self._capabilities.get(name)
     
-    def get_capabilities_by_category(self, category: Union[CapabilityCategory, str]) -> List[APICapability]:
+    def list_capabilities(self) -> List[APICapability]:
         """
-        Get all capabilities in a specific category.
+        Get a list of all registered capabilities.
+        
+        Returns:
+            List of all capabilities
+        """
+        return list(self._capabilities.values())
+    
+    def get_capabilities_by_level(self, level: CapabilityLevel) -> List[APICapability]:
+        """
+        Get capabilities with the specified support level.
         
         Args:
-            category: Category to filter by
+            level: The capability level to filter by
             
         Returns:
-            List of APICapability instances in the specified category
+            List of capabilities with the specified level
         """
-        if isinstance(category, str):
-            try:
-                category = CapabilityCategory(category)
-            except ValueError:
-                logger.warning(f"Unknown capability category '{category}'")
-                return []
-                
-        return [cap for cap in self.capabilities.values() if cap.category == category]
+        return [cap for cap in self._capabilities.values() if cap.level == level]
     
-    def get_all_capabilities(self) -> List[APICapability]:
+    def to_dict(self) -> Dict[str, Dict[str, Any]]:
         """
-        Get all registered capabilities.
+        Convert the registry to a dictionary representation.
         
         Returns:
-            List of all registered APICapability instances
+            Dictionary mapping capability names to capability dictionaries
         """
-        return list(self.capabilities.values())
+        return {name: cap.to_dict() for name, cap in self._capabilities.items()}
     
-    def filter_capabilities_by_version(self, version: str) -> List[APICapability]:
+    @classmethod
+    def from_dict(cls, data: Dict[str, Dict[str, Any]]) -> 'CapabilityRegistry':
         """
-        Filter capabilities by API version.
+        Create a registry from a dictionary representation.
         
         Args:
-            version: API version to filter by
+            data: Dictionary mapping capability names to capability dictionaries
             
         Returns:
-            List of APICapability instances available in the specified version
+            New CapabilityRegistry instance
         """
-        return [
-            cap for cap in self.capabilities.values() 
-            if cap.is_available_in_version(version)
-        ]
+        registry = cls()
+        for name, cap_data in data.items():
+            # Ensure name in data matches key
+            cap_data["name"] = name
+            registry.register_capability(APICapability.from_dict(cap_data))
+        return registry
     
     def clear(self) -> None:
-        """Clear all registered capabilities."""
-        self.capabilities.clear()
-        
-        # Re-register standard capabilities
-        for cap in self.standard_capabilities:
-            self.register_capability(cap)
+        """Clear all capabilities from the registry."""
+        self._capabilities.clear()
 
 
 class CapabilitySet:
     """
-    Represents a set of capabilities supported by an API or required by a client.
-    Used for capability negotiation.
+    A set of API capabilities with operations for capability negotiation.
     """
     
-    def __init__(self, capabilities: Optional[List[Union[str, APICapability]]] = None):
+    def __init__(self, capabilities: Optional[List[APICapability]] = None):
         """
         Initialize a capability set.
         
         Args:
-            capabilities: Optional list of capabilities or capability names
+            capabilities: Optional list of capabilities to include
         """
-        self.capability_names = set()  # type: Set[str]
-        
-        if capabilities:
-            for cap in capabilities:
-                if isinstance(cap, APICapability):
-                    self.capability_names.add(cap.name)
-                elif isinstance(cap, str):
-                    self.capability_names.add(cap)
-                else:
-                    logger.warning(f"Ignoring invalid capability type: {type(cap)}")
+        self.capabilities: Set[APICapability] = set(capabilities or [])
     
-    def add_capability(self, capability: Union[str, APICapability]) -> bool:
+    def add(self, capability: APICapability) -> None:
         """
         Add a capability to the set.
         
         Args:
-            capability: Capability or capability name to add
-            
-        Returns:
-            True if the capability was added, False otherwise
+            capability: The capability to add
         """
-        if isinstance(capability, APICapability):
-            self.capability_names.add(capability.name)
-            return True
-        elif isinstance(capability, str):
-            self.capability_names.add(capability)
-            return True
-        else:
-            logger.warning(f"Cannot add invalid capability type: {type(capability)}")
-            return False
+        self.capabilities.add(capability)
     
-    def remove_capability(self, capability: Union[str, APICapability]) -> bool:
+    def remove(self, capability_name: str) -> bool:
         """
         Remove a capability from the set.
         
         Args:
-            capability: Capability or capability name to remove
+            capability_name: Name of the capability to remove
             
         Returns:
-            True if the capability was removed, False otherwise
+            True if the capability was removed, False if it wasn't in the set
         """
-        name = capability.name if isinstance(capability, APICapability) else capability
-        
-        if name in self.capability_names:
-            self.capability_names.remove(name)
-            return True
+        for cap in self.capabilities:
+            if cap.name == capability_name:
+                self.capabilities.remove(cap)
+                return True
         return False
     
-    def has_capability(self, capability: Union[str, APICapability]) -> bool:
+    def contains(self, capability_name: str) -> bool:
         """
-        Check if the set contains a specific capability.
+        Check if the set contains a capability.
         
         Args:
-            capability: Capability or capability name to check
+            capability_name: Name of the capability to check
             
         Returns:
             True if the capability is in the set, False otherwise
         """
-        name = capability.name if isinstance(capability, APICapability) else capability
-        return name in self.capability_names
+        return any(cap.name == capability_name for cap in self.capabilities)
     
-    def get_capability_names(self) -> List[str]:
+    def get(self, capability_name: str) -> Optional[APICapability]:
         """
-        Get a list of capability names in the set.
-        
-        Returns:
-            List of capability names
-        """
-        return list(self.capability_names)
-    
-    def get_capabilities(self, registry: APICapabilityRegistry) -> List[APICapability]:
-        """
-        Get a list of capability objects in the set.
+        Get a capability from the set by name.
         
         Args:
-            registry: APICapabilityRegistry to resolve capability names
+            capability_name: Name of the capability to get
             
         Returns:
-            List of APICapability objects
+            The capability if found, None otherwise
         """
-        result = []
-        for name in self.capability_names:
-            cap = registry.get_capability(name)
-            if cap:
-                result.append(cap)
-            else:
-                logger.warning(f"Unknown capability '{name}' not found in registry")
-        return result
+        for cap in self.capabilities:
+            if cap.name == capability_name:
+                return cap
+        return None
     
-    def to_dict(self) -> Dict[str, Any]:
+    def get_names(self) -> Set[str]:
         """
-        Convert the capability set to a dictionary representation.
+        Get the set of capability names.
         
         Returns:
-            Dictionary representation of the capability set
+            Set of capability names
         """
-        return {
-            'capabilities': list(self.capability_names)
-        }
+        return {cap.name for cap in self.capabilities}
     
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'CapabilitySet':
+    def intersection(self, other: 'CapabilitySet') -> 'CapabilitySet':
         """
-        Create a capability set from a dictionary representation.
+        Get the intersection of this set with another capability set.
         
         Args:
-            data: Dictionary representation of the capability set
+            other: The other capability set
+            
+        Returns:
+            New capability set with capabilities in both sets
+        """
+        # Get the intersection of capability names
+        common_names = self.get_names().intersection(other.get_names())
+        
+        # Create a new set with capabilities from this set that are in the intersection
+        result = CapabilitySet()
+        for cap in self.capabilities:
+            if cap.name in common_names:
+                result.add(cap)
+        
+        return result
+    
+    def union(self, other: 'CapabilitySet') -> 'CapabilitySet':
+        """
+        Get the union of this set with another capability set.
+        
+        Args:
+            other: The other capability set
+            
+        Returns:
+            New capability set with capabilities from both sets
+        """
+        result = CapabilitySet()
+        
+        # Add all capabilities from this set
+        for cap in self.capabilities:
+            result.add(cap)
+        
+        # Add capabilities from other set, overriding duplicates
+        for cap in other.capabilities:
+            if result.contains(cap.name):
+                result.remove(cap.name)
+            result.add(cap)
+        
+        return result
+    
+    def filter_by_level(self, level: CapabilityLevel) -> 'CapabilitySet':
+        """
+        Get a subset of capabilities with the specified level.
+        
+        Args:
+            level: The capability level to filter by
+            
+        Returns:
+            New capability set with capabilities of the specified level
+        """
+        result = CapabilitySet()
+        for cap in self.capabilities:
+            if cap.level == level:
+                result.add(cap)
+        return result
+    
+    def to_list(self) -> List[Dict[str, Any]]:
+        """
+        Convert the capability set to a list of dictionaries.
+        
+        Returns:
+            List of capability dictionaries
+        """
+        return [cap.to_dict() for cap in self.capabilities]
+    
+    @classmethod
+    def from_list(cls, data: List[Dict[str, Any]]) -> 'CapabilitySet':
+        """
+        Create a capability set from a list of dictionaries.
+        
+        Args:
+            data: List of capability dictionaries
             
         Returns:
             New CapabilitySet instance
         """
-        return cls(capabilities=data.get('capabilities', []))
-    
-    def is_compatible_with(self, required_set: 'CapabilitySet') -> bool:
-        """
-        Check if this capability set is compatible with a required set.
-        
-        Args:
-            required_set: CapabilitySet containing required capabilities
-            
-        Returns:
-            True if this set contains all capabilities in the required set
-        """
-        return required_set.capability_names.issubset(self.capability_names)
-    
-    def get_missing_capabilities(self, required_set: 'CapabilitySet') -> List[str]:
-        """
-        Get a list of capability names that are in the required set but not in this set.
-        
-        Args:
-            required_set: CapabilitySet containing required capabilities
-            
-        Returns:
-            List of missing capability names
-        """
-        return list(required_set.capability_names - self.capability_names)
-    
-    def __str__(self) -> str:
-        """String representation of the capability set."""
-        return f"CapabilitySet({sorted(list(self.capability_names))})"
+        capabilities = [APICapability.from_dict(cap_data) for cap_data in data]
+        return cls(capabilities)
     
     def __len__(self) -> int:
-        """Number of capabilities in the set."""
-        return len(self.capability_names)
+        """Get the number of capabilities in the set."""
+        return len(self.capabilities)
+    
+    def __iter__(self):
+        """Iterate over capabilities in the set."""
+        return iter(self.capabilities)
 
 
-class APICapabilityNegotiator:
+class CapabilityNegotiator:
     """
-    Handles discovery and negotiation of API capabilities between client and service.
+    Negotiates API capabilities between the application and API providers.
     """
     
-    def __init__(self, registry: Optional[APICapabilityRegistry] = None):
+    def __init__(self, app_capabilities: Optional[CapabilitySet] = None,
+                registry: Optional[CapabilityRegistry] = None):
         """
-        Initialize the capability negotiator.
+        Initialize a capability negotiator.
         
         Args:
-            registry: Optional capability registry to use
+            app_capabilities: Optional set of application capabilities
+            registry: Optional capability registry
         """
-        self.registry = registry or APICapabilityRegistry()
+        self.app_capabilities = app_capabilities or CapabilitySet()
+        self.registry = registry or CapabilityRegistry()
+        self.provider_capabilities: Dict[str, CapabilitySet] = {}
     
-    def negotiate_capabilities(self, 
-                             available_capabilities: CapabilitySet,
-                             required_capabilities: CapabilitySet) -> Tuple[bool, CapabilitySet, List[str]]:
+    def register_provider(self, provider_id: str, 
+                         capabilities: CapabilitySet) -> None:
         """
-        Negotiate capabilities between what's available and what's required.
+        Register a provider's capabilities.
         
         Args:
-            available_capabilities: Set of capabilities available to the API
-            required_capabilities: Set of capabilities required by the client
+            provider_id: Unique identifier for the provider
+            capabilities: The provider's capability set
+        """
+        self.provider_capabilities[provider_id] = capabilities
+        logger.info(f"Registered provider '{provider_id}' with {len(capabilities)} capabilities")
+    
+    def negotiate_capabilities(self, provider_id: str) -> Tuple[CapabilitySet, Dict[str, List[str]]]:
+        """
+        Negotiate capabilities with a provider.
+        
+        Args:
+            provider_id: Identifier of the provider to negotiate with
             
         Returns:
-            Tuple containing:
-            - Boolean indicating if negotiation was successful
-            - CapabilitySet of negotiated capabilities (intersection)
-            - List of missing capability names
+            Tuple of (negotiated capability set, capability issues)
+            
+        Raises:
+            ValueError: If the provider is not registered
         """
-        # Check if all required capabilities are available
-        if available_capabilities.is_compatible_with(required_capabilities):
-            # Create a new set with only the capabilities that are required
-            negotiated = CapabilitySet(required_capabilities.get_capability_names())
-            return True, negotiated, []
+        if provider_id not in self.provider_capabilities:
+            raise ValueError(f"Provider '{provider_id}' not registered")
         
-        # Get the missing capabilities
-        missing = required_capabilities.get_missing_capabilities(available_capabilities)
+        provider_caps = self.provider_capabilities[provider_id]
         
-        # Create a set with the intersection of available and required capabilities
-        negotiated_names = set(required_capabilities.capability_names) - set(missing)
-        negotiated = CapabilitySet(list(negotiated_names))
+        # Get the intersection of app and provider capabilities
+        common_caps = self.app_capabilities.intersection(provider_caps)
         
-        return False, negotiated, missing
+        # Track capability issues by level
+        issues: Dict[str, List[str]] = {
+            "missing_required": [],
+            "missing_preferred": [],
+            "additional": []
+        }
+        
+        # Check for missing required capabilities
+        required_caps = self.app_capabilities.filter_by_level(CapabilityLevel.REQUIRED)
+        for cap in required_caps:
+            if not provider_caps.contains(cap.name):
+                issues["missing_required"].append(cap.name)
+        
+        # Check for missing preferred capabilities
+        preferred_caps = self.app_capabilities.filter_by_level(CapabilityLevel.PREFERRED)
+        for cap in preferred_caps:
+            if not provider_caps.contains(cap.name):
+                issues["missing_preferred"].append(cap.name)
+        
+        # Check for additional capabilities offered by the provider
+        provider_names = provider_caps.get_names()
+        app_names = self.app_capabilities.get_names()
+        additional_names = provider_names - app_names
+        issues["additional"] = list(additional_names)
+        
+        return common_caps, issues
     
-    def discover_api_capabilities(self, plugin_name: str, api_gateway) -> Optional[CapabilitySet]:
+    def find_compatible_providers(self, 
+                                required_only: bool = False) -> Dict[str, Dict[str, Any]]:
         """
-        Discover capabilities of an API through its plugin.
+        Find providers compatible with the application's capabilities.
         
         Args:
-            plugin_name: Name of the plugin to query
-            api_gateway: APIGateway instance for plugin access
+            required_only: If True, only consider required capabilities
             
         Returns:
-            CapabilitySet of discovered capabilities or None on failure
+            Dictionary mapping provider IDs to compatibility information
         """
-        plugin = api_gateway.get_plugin(plugin_name)
+        results = {}
         
-        if not plugin:
-            logger.error(f"Plugin {plugin_name} is not registered")
-            return None
+        # Filter app capabilities if only checking required ones
+        app_caps = self.app_capabilities
+        if required_only:
+            app_caps = app_caps.filter_by_level(CapabilityLevel.REQUIRED)
+        
+        # Check each provider
+        for provider_id, provider_caps in self.provider_capabilities.items():
+            # Get common capabilities
+            common_caps = app_caps.intersection(provider_caps)
             
+            # Calculate compatibility score
+            if len(app_caps) > 0:
+                compatibility_score = len(common_caps) / len(app_caps)
+            else:
+                compatibility_score = 1.0
+            
+            # Check if all required capabilities are supported
+            required_caps = self.app_capabilities.filter_by_level(CapabilityLevel.REQUIRED)
+            missing_required = []
+            for cap in required_caps:
+                if not provider_caps.contains(cap.name):
+                    missing_required.append(cap.name)
+            
+            results[provider_id] = {
+                "compatibility_score": compatibility_score,
+                "common_capabilities": len(common_caps),
+                "total_app_capabilities": len(app_caps),
+                "total_provider_capabilities": len(provider_caps),
+                "missing_required": missing_required,
+                "is_compatible": len(missing_required) == 0
+            }
+        
+        return results
+    
+    def get_negotiated_parameters(self, provider_id: str,
+                                capability_name: str) -> Dict[str, Any]:
+        """
+        Get negotiated parameters for a specific capability.
+        
+        Args:
+            provider_id: Identifier of the provider
+            capability_name: Name of the capability
+            
+        Returns:
+            Dictionary of negotiated parameters
+            
+        Raises:
+            ValueError: If the provider is not registered or the capability is not supported
+        """
+        if provider_id not in self.provider_capabilities:
+            raise ValueError(f"Provider '{provider_id}' not registered")
+        
+        provider_caps = self.provider_capabilities[provider_id]
+        provider_cap = provider_caps.get(capability_name)
+        
+        if not provider_cap:
+            raise ValueError(f"Capability '{capability_name}' not supported by provider '{provider_id}'")
+        
+        app_cap = self.app_capabilities.get(capability_name)
+        
+        if not app_cap:
+            raise ValueError(f"Capability '{capability_name}' not supported by application")
+        
+        # Start with application parameters
+        params = app_cap.parameters.copy()
+        
+        # Override with provider parameters
+        for key, value in provider_cap.parameters.items():
+            params[key] = value
+        
+        return params
+    
+    def update_app_capabilities(self, capabilities: CapabilitySet) -> None:
+        """
+        Update the application's capabilities.
+        
+        Args:
+            capabilities: New application capabilities
+        """
+        self.app_capabilities = capabilities
+    
+    def save_to_file(self, file_path: str) -> bool:
+        """
+        Save the negotiator state to a file.
+        
+        Args:
+            file_path: Path to save the state to
+            
+        Returns:
+            True if successful, False otherwise
+        """
         try:
-            # Get capability set from plugin
-            capabilities = self._get_plugin_capabilities(plugin)
-            return capabilities
+            data = {
+                "app_capabilities": self.app_capabilities.to_list(),
+                "providers": {
+                    provider_id: caps.to_list()
+                    for provider_id, caps in self.provider_capabilities.items()
+                },
+                "registry": self.registry.to_dict()
+            }
             
+            with open(file_path, 'w') as f:
+                json.dump(data, f, indent=2)
+            
+            return True
         except Exception as e:
-            logger.error(f"Error discovering capabilities for plugin {plugin_name}: {e}")
-            return None
+            logger.error(f"Failed to save capability negotiator to {file_path}: {e}")
+            return False
     
-    def discover_capabilities_from_api(self, 
-                                     plugin_name: str, 
-                                     api_gateway,
-                                     capability_endpoint: str = '/capabilities') -> Optional[CapabilitySet]:
+    @classmethod
+    def load_from_file(cls, file_path: str) -> Optional['CapabilityNegotiator']:
         """
-        Discover capabilities by making a request to the API's capability endpoint.
+        Load negotiator state from a file.
         
         Args:
-            plugin_name: Name of the plugin to use
-            api_gateway: APIGateway instance for plugin access
-            capability_endpoint: API endpoint for capability discovery
+            file_path: Path to load the state from
             
         Returns:
-            CapabilitySet of discovered capabilities or None on failure
+            New CapabilityNegotiator instance or None if loading failed
         """
-        plugin = api_gateway.get_plugin(plugin_name)
-        
-        if not plugin:
-            logger.error(f"Plugin {plugin_name} is not registered")
-            return None
-            
         try:
-            # Make a request to the capability endpoint
-            result = api_gateway.execute_request(
-                plugin_name=plugin_name,
-                endpoint=capability_endpoint,
-                method='GET'
-            )
+            with open(file_path, 'r') as f:
+                data = json.load(f)
             
-            if not result.get('success', False):
-                logger.error(f"Failed to discover capabilities from API: {result.get('error')}")
-                
-                # Fall back to plugin capabilities
-                logger.info("Falling back to plugin capability declarations")
-                return self._get_plugin_capabilities(plugin)
+            # Create registry
+            registry = CapabilityRegistry.from_dict(data.get("registry", {}))
             
-            # Parse the capabilities from the response
-            capabilities_data = result.get('data', {}).get('capabilities', [])
-            capabilities = CapabilitySet(capabilities_data)
+            # Create app capabilities
+            app_capabilities = CapabilitySet.from_list(data.get("app_capabilities", []))
             
-            return capabilities
+            # Create negotiator
+            negotiator = cls(app_capabilities, registry)
             
+            # Add providers
+            for provider_id, caps_list in data.get("providers", {}).items():
+                negotiator.register_provider(
+                    provider_id,
+                    CapabilitySet.from_list(caps_list)
+                )
+            
+            return negotiator
         except Exception as e:
-            logger.error(f"Error discovering capabilities from API: {e}")
-            
-            # Fall back to plugin capabilities
-            logger.info("Falling back to plugin capability declarations due to error")
-            return self._get_plugin_capabilities(plugin)
-    
-    def _get_plugin_capabilities(self, plugin) -> CapabilitySet:
-        """
-        Extract capabilities from a plugin instance.
-        
-        Args:
-            plugin: APIPluginBase instance
-            
-        Returns:
-            CapabilitySet of plugin capabilities
-        """
-        capabilities = CapabilitySet()
-        
-        # Add authentication capabilities
-        for auth_method in plugin.supported_auth_methods:
-            capabilities.add_capability(f"auth:{auth_method}")
-        
-        # Add common capabilities based on plugin properties
-        self._add_common_capabilities(plugin, capabilities)
-        
-        # Add protocol/format capabilities
-        capabilities.add_capability("format:json")  # Most APIs support JSON
-        
-        # Add operation-specific capabilities
-        for operation in plugin.available_operations:
-            capabilities.add_capability(f"operation:{operation}")
-        
-        return capabilities
-    
-    def _add_common_capabilities(self, plugin, capabilities: CapabilitySet) -> None:
-        """
-        Add common capabilities based on plugin properties.
-        
-        Args:
-            plugin: APIPluginBase instance
-            capabilities: CapabilitySet to add capabilities to
-        """
-        # Integration capabilities
-        if plugin.supports_webhooks:
-            capabilities.add_capability("integration:webhooks")
-            
-        if plugin.supports_streaming:
-            capabilities.add_capability("integration:streaming")
-            
-        if plugin.supports_batch_operations:
-            capabilities.add_capability("integration:batch")
-        
-        # Performance capabilities
-        if plugin.supports_caching:
-            capabilities.add_capability("performance:caching")
-            
-        if plugin.requires_rate_limiting:
-            capabilities.add_capability("performance:rate_limited")
+            logger.error(f"Failed to load capability negotiator from {file_path}: {e}")
+            return None
 
 
-# Create a global instance for convenience
-default_capability_registry = APICapabilityRegistry()
+class APIDiscovery:
+    """
+    Discovers and registers API capabilities from providers.
+    """
+    
+    def __init__(self, registry: Optional[CapabilityRegistry] = None,
+                negotiator: Optional[CapabilityNegotiator] = None):
+        """
+        Initialize the API discovery system.
+        
+        Args:
+            registry: Optional capability registry
+            negotiator: Optional capability negotiator
+        """
+        self.registry = registry or CapabilityRegistry()
+        self.negotiator = negotiator or CapabilityNegotiator(registry=self.registry)
+    
+    def discover_capabilities_from_endpoint(self, provider_id: str,
+                                          url: str, headers: Optional[Dict[str, str]] = None,
+                                          auth: Optional[Dict[str, str]] = None) -> bool:
+        """
+        Discover capabilities from a provider's discovery endpoint.
+        
+        Args:
+            provider_id: Unique identifier for the provider
+            url: URL of the discovery endpoint
+            headers: Optional headers for the request
+            auth: Optional authentication information
+            
+        Returns:
+            True if discovery was successful, False otherwise
+        """
+        try:
+            import requests
+            
+            # Prepare request
+            request_headers = headers or {}
+            request_auth = None
+            
+            if auth:
+                if 'type' in auth and auth['type'] == 'basic':
+                    request_auth = (auth.get('username', ''), auth.get('password', ''))
+                else:
+                    # API key auth
+                    key_name = auth.get('key_name', 'Authorization')
+                    key_value = auth.get('key_value', '')
+                    key_prefix = auth.get('key_prefix', 'Bearer')
+                    
+                    if key_prefix:
+                        request_headers[key_name] = f"{key_prefix} {key_value}"
+                    else:
+                        request_headers[key_name] = key_value
+            
+            # Make request
+            response = requests.get(url, headers=request_headers, auth=request_auth)
+            response.raise_for_status()
+            
+            # Parse response
+            data = response.json()
+            
+            # Extract capabilities
+            capabilities_data = data.get('capabilities', [])
+            capabilities = CapabilitySet.from_list(capabilities_data)
+            
+            # Register provider
+            self.negotiator.register_provider(provider_id, capabilities)
+            
+            return True
+        except Exception as e:
+            logger.error(f"Failed to discover capabilities from {url}: {e}")
+            return False
+    
+    def discover_capabilities_from_file(self, provider_id: str,
+                                      file_path: str) -> bool:
+        """
+        Discover capabilities from a JSON file.
+        
+        Args:
+            provider_id: Unique identifier for the provider
+            file_path: Path to the capability definition file
+            
+        Returns:
+            True if discovery was successful, False otherwise
+        """
+        try:
+            with open(file_path, 'r') as f:
+                data = json.load(f)
+            
+            # Extract capabilities
+            capabilities_data = data.get('capabilities', [])
+            capabilities = CapabilitySet.from_list(capabilities_data)
+            
+            # Register provider
+            self.negotiator.register_provider(provider_id, capabilities)
+            
+            return True
+        except Exception as e:
+            logger.error(f"Failed to discover capabilities from {file_path}: {e}")
+            return False
+    
+    def register_standard_capabilities(self) -> None:
+        """Register standard capabilities in the registry."""
+        # Text analysis capabilities
+        self.registry.register_capability(APICapability(
+            name="text_analysis",
+            description="Ability to analyze text content",
+            level=CapabilityLevel.REQUIRED,
+            version="1.0",
+            parameters={"max_text_length": 100000}
+        ))
+        
+        self.registry.register_capability(APICapability(
+            name="sentiment_analysis",
+            description="Detect sentiment in text",
+            level=CapabilityLevel.OPTIONAL,
+            version="1.0",
+            parameters={"languages": ["en"]}
+        ))
+        
+        self.registry.register_capability(APICapability(
+            name="entity_extraction",
+            description="Extract named entities from text",
+            level=CapabilityLevel.PREFERRED,
+            version="1.0",
+            parameters={"entity_types": ["person", "organization", "location", "date"]}
+        ))
+        
+        self.registry.register_capability(APICapability(
+            name="text_summarization",
+            description="Generate summaries of text content",
+            level=CapabilityLevel.PREFERRED,
+            version="1.0",
+            parameters={"max_summary_length": 1000}
+        ))
+        
+        self.registry.register_capability(APICapability(
+            name="text_classification",
+            description="Classify text into categories",
+            level=CapabilityLevel.OPTIONAL,
+            version="1.0",
+            parameters={"max_categories": 5}
+        ))
+        
+        # Image analysis capabilities
+        self.registry.register_capability(APICapability(
+            name="image_analysis",
+            description="Ability to analyze image content",
+            level=CapabilityLevel.REQUIRED,
+            version="1.0",
+            parameters={"max_image_size": 10485760}  # 10MB
+        ))
+        
+        self.registry.register_capability(APICapability(
+            name="object_detection",
+            description="Detect objects in images",
+            level=CapabilityLevel.PREFERRED,
+            version="1.0",
+            parameters={"min_confidence": 0.6}
+        ))
+        
+        self.registry.register_capability(APICapability(
+            name="facial_recognition",
+            description="Detect and recognize faces in images",
+            level=CapabilityLevel.OPTIONAL,
+            version="1.0",
+            parameters={"detect_attributes": True}
+        ))
+        
+        self.registry.register_capability(APICapability(
+            name="image_ocr",
+            description="Extract text from images",
+            level=CapabilityLevel.PREFERRED,
+            version="1.0",
+            parameters={"languages": ["en"]}
+        ))
+        
+        # Audio analysis capabilities
+        self.registry.register_capability(APICapability(
+            name="audio_analysis",
+            description="Ability to analyze audio content",
+            level=CapabilityLevel.OPTIONAL,
+            version="1.0",
+            parameters={"max_audio_length": 600}  # 10 minutes
+        ))
+        
+        self.registry.register_capability(APICapability(
+            name="speech_to_text",
+            description="Convert speech to text",
+            level=CapabilityLevel.OPTIONAL,
+            version="1.0",
+            parameters={"languages": ["en"]}
+        ))
+        
+        # PDF processing capabilities
+        self.registry.register_capability(APICapability(
+            name="pdf_extraction",
+            description="Extract content from PDF files",
+            level=CapabilityLevel.REQUIRED,
+            version="1.0",
+            parameters={"extract_images": True}
+        ))
+        
+        self.registry.register_capability(APICapability(
+            name="pdf_ocr",
+            description="OCR for image-based PDFs",
+            level=CapabilityLevel.PREFERRED,
+            version="1.0",
+            parameters={"languages": ["en"]}
+        ))
+        
+        # Vector operations
+        self.registry.register_capability(APICapability(
+            name="vector_embeddings",
+            description="Generate vector embeddings for content",
+            level=CapabilityLevel.OPTIONAL,
+            version="1.0",
+            parameters={"embedding_dimensions": 1536}
+        ))
+        
+        self.registry.register_capability(APICapability(
+            name="vector_search",
+            description="Search for similar content using vectors",
+            level=CapabilityLevel.OPTIONAL,
+            version="1.0",
+            parameters={"max_results": 10}
+        ))
+    
+    def setup_default_app_capabilities(self) -> None:
+        """Set up default application capabilities."""
+        # Create capability set
+        app_capabilities = CapabilitySet()
+        
+        # Add required capabilities
+        for cap in self.registry.get_capabilities_by_level(CapabilityLevel.REQUIRED):
+            app_capabilities.add(cap)
+        
+        # Add preferred capabilities
+        for cap in self.registry.get_capabilities_by_level(CapabilityLevel.PREFERRED):
+            app_capabilities.add(cap)
+        
+        # Add selected optional capabilities
+        optional_capabilities = [
+            "sentiment_analysis",
+            "text_classification",
+            "audio_analysis",
+            "speech_to_text",
+            "vector_embeddings"
+        ]
+        
+        for cap_name in optional_capabilities:
+            cap = self.registry.get_capability(cap_name)
+            if cap:
+                app_capabilities.add(cap)
+        
+        # Update negotiator
+        self.negotiator.update_app_capabilities(app_capabilities)
+
+
+# Initialize global capability registry and negotiator
+DEFAULT_REGISTRY = CapabilityRegistry()
+DEFAULT_NEGOTIATOR = CapabilityNegotiator(registry=DEFAULT_REGISTRY)
+DEFAULT_DISCOVERY = APIDiscovery(DEFAULT_REGISTRY, DEFAULT_NEGOTIATOR)

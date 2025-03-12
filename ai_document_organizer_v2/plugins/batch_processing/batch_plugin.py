@@ -1,38 +1,44 @@
 """
 Batch Processing Plugin for AI Document Organizer V2.
-
-Provides batch processing capabilities for document processing tasks.
 """
 
-import concurrent.futures
+import json
 import logging
+import os
 import threading
 import time
-import uuid
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+import queue
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Dict, List, Optional, Set, Tuple, Union, Callable
 
 from ai_document_organizer_v2.core.plugin_base import PluginBase
-from .models.job import Job, JobQueue, JobStatus, JobPriority
+from ai_document_organizer_v2.plugins.batch_processing.models.job import Job, JobStatus, JobPriority
+from ai_document_organizer_v2.plugins.batch_processing.models.job_group import JobGroup
 
 
 logger = logging.getLogger(__name__)
 
 
-class BatchProcessingPlugin(PluginBase):
+class BatchProcessorPlugin(PluginBase):
     """
-    Plugin for batch processing of document processing tasks.
+    Batch Processing Plugin for AI Document Organizer V2.
     
-    This plugin provides a job queue and scheduling system for asynchronously
-    processing large numbers of documents in batches.
+    This plugin provides:
+    - Asynchronous job execution
+    - Job queue management
+    - Job groups for related tasks
+    - Retry mechanisms for failed jobs
+    - Job status tracking and reporting
     """
     
-    plugin_name = "batch_processing"
+    plugin_name = "batch_processor"
     plugin_version = "1.0.0"
-    plugin_description = "Batch processing capabilities for document processing tasks"
+    plugin_description = "Batch processing and asynchronous job execution management"
+    plugin_author = "AI Document Organizer Team"
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         """
-        Initialize the batch processing plugin.
+        Initialize the batch processor plugin.
         
         Args:
             config: Optional configuration dictionary
@@ -41,38 +47,35 @@ class BatchProcessingPlugin(PluginBase):
         
         # Configuration
         self.config = config or {}
-        self.max_concurrent_jobs = self.config.get("max_concurrent_jobs", 5)
+        self.data_dir = self.config.get("data_dir", "data/batch_processor")
+        
+        # Job execution settings
+        self.max_workers = self.config.get("max_workers", 4)
         self.max_queue_size = self.config.get("max_queue_size", 1000)
-        self.default_timeout = self.config.get("default_timeout", 3600)  # 1 hour
-        self.default_retries = self.config.get("default_retries", 3)
-        self.default_retry_delay = self.config.get("default_retry_delay", 60)  # 1 minute
-        self.monitor_interval = self.config.get("monitor_interval", 1.0)  # 1 second
+        self.poll_interval = self.config.get("poll_interval", 0.5)  # seconds
         
-        # Job management
-        self.job_queue = JobQueue()
-        self.active_jobs: Dict[str, Job] = {}
-        self.completed_jobs: Dict[str, Job] = {}
-        self.job_results: Dict[str, Any] = {}
-        self.job_group_map: Dict[str, List[str]] = {}
+        # Job state
+        self.jobs = {}  # job_id -> Job
+        self.job_groups = {}  # group_id -> JobGroup
         
-        # Thread management
-        self.executor = None
-        self.monitor_thread = None
+        # Job queue
+        self.job_queue = queue.PriorityQueue(maxsize=self.max_queue_size)
+        
+        # Execution state
         self.running = False
-        self.stop_event = threading.Event()
-        self.lock = threading.RLock()
+        self.worker_thread = None
+        self.executor = None
+        self.job_futures = {}  # job_id -> Future
         
-        # Scheduling and metrics
-        self.scheduling_policy = "fairshare"  # Options: "fifo", "priority", "fairshare"
-        self.job_metrics: Dict[str, Dict[str, Any]] = {}
-        self.system_metrics: Dict[str, Any] = {
-            "jobs_processed": 0,
-            "jobs_succeeded": 0,
+        # Statistics
+        self.stats = {
+            "jobs_submitted": 0,
+            "jobs_completed": 0,
             "jobs_failed": 0,
             "jobs_canceled": 0,
-            "total_processing_time": 0.0,
-            "start_time": None,
-            "uptime": 0.0,
+            "total_execution_time": 0.0,
+            "average_execution_time": 0.0,
+            "average_wait_time": 0.0
         }
     
     def initialize(self) -> bool:
@@ -82,101 +85,67 @@ class BatchProcessingPlugin(PluginBase):
         Returns:
             True if initialization was successful, False otherwise
         """
-        try:
-            # Create thread pool executor
-            self.executor = concurrent.futures.ThreadPoolExecutor(
-                max_workers=self.max_concurrent_jobs,
-                thread_name_prefix="batch_worker"
-            )
-            
-            logger.info(f"Batch processing plugin initialized with max_concurrent_jobs={self.max_concurrent_jobs}")
-            return True
+        logger.info("Initializing BatchProcessorPlugin")
         
-        except Exception as e:
-            logger.error(f"Failed to initialize batch processing plugin: {e}")
-            return False
-    
-    def shutdown(self) -> bool:
-        """
-        Shutdown the plugin.
+        # Create data directory if it doesn't exist
+        os.makedirs(self.data_dir, exist_ok=True)
         
-        Returns:
-            True if shutdown was successful, False otherwise
-        """
-        try:
-            # Stop the plugin first
-            if self.running:
-                self.stop()
-            
-            # Shutdown the executor
-            if self.executor:
-                self.executor.shutdown(wait=True)
-                self.executor = None
-            
-            logger.info("Batch processing plugin shutdown")
-            return True
+        # Load jobs and job groups
+        self._load_jobs()
+        self._load_job_groups()
         
-        except Exception as e:
-            logger.error(f"Failed to shutdown batch processing plugin: {e}")
-            return False
+        # Reset running job states since we're just starting
+        for job in self.jobs.values():
+            if job.status in [JobStatus.RUNNING, JobStatus.QUEUED]:
+                job.status = JobStatus.CREATED
+        
+        return True
     
     def activate(self) -> bool:
         """
-        Activate the plugin. This starts the job processor.
+        Activate the plugin.
         
         Returns:
             True if activation was successful, False otherwise
         """
-        try:
-            if not self.running:
-                self.start()
-            return True
+        logger.info("Activating BatchProcessorPlugin")
         
-        except Exception as e:
-            logger.error(f"Failed to activate batch processing plugin: {e}")
-            return False
+        # Start worker thread
+        self.start()
+        
+        return True
     
     def deactivate(self) -> bool:
         """
-        Deactivate the plugin. This stops the job processor.
+        Deactivate the plugin.
         
         Returns:
             True if deactivation was successful, False otherwise
         """
-        try:
-            if self.running:
-                self.stop()
-            return True
+        logger.info("Deactivating BatchProcessorPlugin")
         
-        except Exception as e:
-            logger.error(f"Failed to deactivate batch processing plugin: {e}")
-            return False
+        # Stop worker thread
+        self.stop()
+        
+        return True
     
-    def get_type(self) -> str:
+    def shutdown(self) -> bool:
         """
-        Get the plugin type.
+        Shutdown the plugin and clean up resources.
         
         Returns:
-            Plugin type string
+            True if shutdown was successful, False otherwise
         """
-        return "batch_processing"
-    
-    def get_capabilities(self) -> List[str]:
-        """
-        Get the plugin capabilities.
+        logger.info("Shutting down BatchProcessorPlugin")
         
-        Returns:
-            List of capability strings
-        """
-        return [
-            "batch_processing",
-            "job_queue",
-            "job_scheduling",
-            "parallel_execution",
-            "retry_mechanism",
-            "progress_tracking",
-            "resource_monitoring"
-        ]
+        # Stop worker thread
+        self.stop()
+        
+        # Save jobs and job groups
+        self._save_jobs()
+        self._save_job_groups()
+        
+        return True
     
     def get_info(self) -> Dict[str, Any]:
         """
@@ -185,147 +154,346 @@ class BatchProcessingPlugin(PluginBase):
         Returns:
             Dictionary with plugin information
         """
-        with self.lock:
-            queue_size = self.job_queue.size()
-            active_jobs = len(self.active_jobs)
-            completed_jobs = len(self.completed_jobs)
+        info = super().get_info()
+        info.update({
+            "jobs_count": len(self.jobs),
+            "job_groups_count": len(self.job_groups),
+            "jobs_in_queue": self.job_queue.qsize(),
+            "max_workers": self.max_workers,
+            "is_running": self.running,
+            "jobs_submitted": self.stats["jobs_submitted"],
+            "jobs_completed": self.stats["jobs_completed"],
+            "jobs_failed": self.stats["jobs_failed"]
+        })
+        return info
+    
+    def get_type(self) -> str:
+        """
+        Get the plugin type.
+        
+        Returns:
+            Plugin type
+        """
+        return "batch_processor"
+    
+    def get_capabilities(self) -> List[str]:
+        """
+        Get the plugin capabilities.
+        
+        Returns:
+            List of capabilities
+        """
+        return [
+            "async_job_execution",
+            "job_queue_management",
+            "job_grouping",
+            "job_retry",
+            "job_status_tracking"
+        ]
+    
+    def _load_jobs(self) -> None:
+        """Load jobs from file."""
+        jobs_file = os.path.join(self.data_dir, 'jobs.json')
+        if os.path.exists(jobs_file):
+            try:
+                with open(jobs_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                
+                self.jobs = {}
+                
+                # Create a registry of task functions
+                task_funcs = self._get_task_functions()
+                
+                for job_data in data.get('jobs', []):
+                    # For each job, we need to get its task function from the task name
+                    task_name = job_data.get("task_name", "")
+                    task_func = task_funcs.get(task_name)
+                    
+                    if task_func:
+                        job = Job.from_dict(job_data, task_func)
+                        self.jobs[job.job_id] = job
+                    else:
+                        logger.warning(f"Unable to load job with unknown task name: {task_name}")
+                
+                logger.info(f"Loaded {len(self.jobs)} jobs")
+                
+                # Update stats
+                self.stats["jobs_submitted"] = data.get("jobs_submitted", 0)
+                self.stats["jobs_completed"] = data.get("jobs_completed", 0)
+                self.stats["jobs_failed"] = data.get("jobs_failed", 0)
+                self.stats["jobs_canceled"] = data.get("jobs_canceled", 0)
+                self.stats["total_execution_time"] = data.get("total_execution_time", 0.0)
+                self.stats["average_execution_time"] = data.get("average_execution_time", 0.0)
+                self.stats["average_wait_time"] = data.get("average_wait_time", 0.0)
+                
+            except Exception as e:
+                logger.error(f"Error loading jobs: {e}")
+                self.jobs = {}
+        else:
+            logger.info("No jobs file found, starting with empty jobs")
+            self.jobs = {}
+    
+    def _save_jobs(self) -> None:
+        """Save jobs to file."""
+        os.makedirs(self.data_dir, exist_ok=True)
+        
+        jobs_file = os.path.join(self.data_dir, 'jobs.json')
+        try:
+            job_dicts = []
+            for job in self.jobs.values():
+                job_dict = job.to_dict()
+                # Skip result if too large or complex
+                if 'result' in job_dict and (
+                    not isinstance(job_dict['result'], (str, int, float, bool, list, dict)) or
+                    (isinstance(job_dict['result'], (list, dict)) and len(str(job_dict['result'])) > 10000)
+                ):
+                    job_dict['result'] = f"[Complex result, size: {len(str(job_dict['result']))} bytes]"
+                job_dicts.append(job_dict)
             
-            return {
-                "name": self.plugin_name,
-                "version": self.plugin_version,
-                "description": self.plugin_description,
-                "status": "active" if self.running else "inactive",
-                "max_concurrent_jobs": self.max_concurrent_jobs,
-                "max_queue_size": self.max_queue_size,
-                "queue_size": queue_size,
-                "active_jobs": active_jobs,
-                "completed_jobs": completed_jobs,
-                "metrics": self.system_metrics,
-                "scheduling_policy": self.scheduling_policy
+            data = {
+                'jobs': job_dicts,
+                'jobs_submitted': self.stats["jobs_submitted"],
+                'jobs_completed': self.stats["jobs_completed"],
+                'jobs_failed': self.stats["jobs_failed"],
+                'jobs_canceled': self.stats["jobs_canceled"],
+                'total_execution_time': self.stats["total_execution_time"],
+                'average_execution_time': self.stats["average_execution_time"],
+                'average_wait_time': self.stats["average_wait_time"]
             }
+            
+            with open(jobs_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            
+            logger.info(f"Saved {len(self.jobs)} jobs")
+        except Exception as e:
+            logger.error(f"Error saving jobs: {e}")
+    
+    def _load_job_groups(self) -> None:
+        """Load job groups from file."""
+        groups_file = os.path.join(self.data_dir, 'job_groups.json')
+        if os.path.exists(groups_file):
+            try:
+                with open(groups_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                
+                self.job_groups = {}
+                for group_data in data.get('job_groups', []):
+                    group = JobGroup.from_dict(group_data)
+                    self.job_groups[group.group_id] = group
+                
+                logger.info(f"Loaded {len(self.job_groups)} job groups")
+            except Exception as e:
+                logger.error(f"Error loading job groups: {e}")
+                self.job_groups = {}
+        else:
+            logger.info("No job groups file found, starting with empty job groups")
+            self.job_groups = {}
+    
+    def _save_job_groups(self) -> None:
+        """Save job groups to file."""
+        os.makedirs(self.data_dir, exist_ok=True)
+        
+        groups_file = os.path.join(self.data_dir, 'job_groups.json')
+        try:
+            data = {
+                'job_groups': [group.to_dict() for group in self.job_groups.values()]
+            }
+            
+            with open(groups_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            
+            logger.info(f"Saved {len(self.job_groups)} job groups")
+        except Exception as e:
+            logger.error(f"Error saving job groups: {e}")
+    
+    def _get_task_functions(self) -> Dict[str, Callable]:
+        """
+        Get a dictionary of task name to task function mappings.
+        
+        Returns:
+            Dictionary mapping task names to callable functions
+        """
+        # This needs to be implemented based on specific task names
+        # For now, we'll return an empty dictionary
+        return {}
     
     def start(self) -> bool:
         """
-        Start the job processor.
+        Start the job processing.
         
         Returns:
-            True if the processor was started, False otherwise
+            True if started successfully, False otherwise
         """
         if self.running:
-            logger.warning("Batch processor is already running")
-            return True
-        
-        try:
-            self.running = True
-            self.stop_event.clear()
-            
-            # Start monitor thread
-            self.monitor_thread = threading.Thread(
-                target=self._monitor_jobs,
-                name="batch_monitor"
-            )
-            self.monitor_thread.daemon = True
-            self.monitor_thread.start()
-            
-            self.system_metrics["start_time"] = time.time()
-            logger.info("Batch processor started")
-            return True
-        
-        except Exception as e:
-            self.running = False
-            logger.error(f"Failed to start batch processor: {e}")
+            logger.warning("BatchProcessorPlugin is already running")
             return False
+        
+        logger.info("Starting BatchProcessorPlugin")
+        self.running = True
+        self.executor = ThreadPoolExecutor(max_workers=self.max_workers)
+        self.worker_thread = threading.Thread(target=self._process_jobs)
+        self.worker_thread.daemon = True
+        self.worker_thread.start()
+        
+        return True
     
     def stop(self) -> bool:
         """
-        Stop the job processor.
+        Stop the job processing.
         
         Returns:
-            True if the processor was stopped, False otherwise
+            True if stopped successfully, False otherwise
         """
         if not self.running:
-            logger.warning("Batch processor is not running")
-            return True
-        
-        try:
-            self.running = False
-            self.stop_event.set()
-            
-            # Wait for monitor thread to stop
-            if self.monitor_thread and self.monitor_thread.is_alive():
-                self.monitor_thread.join(timeout=10.0)
-            
-            # Cancel all active jobs
-            with self.lock:
-                for job_id, job in list(self.active_jobs.items()):
-                    self._cancel_job(job)
-            
-            logger.info("Batch processor stopped")
-            return True
-        
-        except Exception as e:
-            logger.error(f"Failed to stop batch processor: {e}")
+            logger.warning("BatchProcessorPlugin is not running")
             return False
+        
+        logger.info("Stopping BatchProcessorPlugin")
+        self.running = False
+        
+        # Wait for worker thread to finish
+        if self.worker_thread and self.worker_thread.is_alive():
+            self.worker_thread.join(timeout=5.0)
+        
+        # Shutdown executor
+        if self.executor:
+            self.executor.shutdown(wait=False)
+            self.executor = None
+        
+        return True
     
-    def submit_job(self, 
-                  func: Callable, 
-                  *args, 
-                  name: Optional[str] = None,
-                  priority: Union[str, JobPriority] = JobPriority.NORMAL,
-                  tags: Optional[List[str]] = None,
-                  metadata: Optional[Dict[str, Any]] = None,
-                  timeout: Optional[int] = None,
-                  retries: int = None,
-                  retry_delay: int = None,
-                  group_id: Optional[str] = None) -> str:
+    def create_job(self,
+                 task_name: str,
+                 task_func: Callable,
+                 task_args: Optional[Dict[str, Any]] = None,
+                 priority: JobPriority = JobPriority.NORMAL,
+                 max_retries: int = 0,
+                 retry_delay: int = 60,
+                 timeout: Optional[int] = None,
+                 dependencies: Optional[List[str]] = None,
+                 metadata: Optional[Dict[str, Any]] = None) -> str:
         """
-        Submit a job for processing.
+        Create a new job.
         
         Args:
-            func: Function to execute
-            *args: Positional arguments to pass to the function
-            name: Optional job name
-            priority: Job priority (high, normal, low)
-            tags: Optional list of tags
+            task_name: Name of the task
+            task_func: Function to execute for this job
+            task_args: Arguments to pass to the task function
+            priority: Job priority
+            max_retries: Maximum number of retries for failed jobs
+            retry_delay: Delay in seconds between retries
+            timeout: Timeout in seconds for the job execution
+            dependencies: List of job IDs that must complete before this job
             metadata: Optional metadata dictionary
-            timeout: Optional timeout in seconds
-            retries: Number of retries on failure (None for default)
-            retry_delay: Delay in seconds between retries (None for default)
-            group_id: Optional group ID for batch operations
             
         Returns:
             Job ID
         """
-        with self.lock:
-            if self.job_queue.size() >= self.max_queue_size:
-                raise ValueError(f"Job queue full (max size: {self.max_queue_size})")
+        job = Job(
+            task_name=task_name,
+            task_func=task_func,
+            task_args=task_args,
+            priority=priority,
+            max_retries=max_retries,
+            retry_delay=retry_delay,
+            timeout=timeout,
+            dependencies=dependencies,
+            metadata=metadata
+        )
+        
+        self.jobs[job.job_id] = job
+        
+        # Save
+        self._save_jobs()
+        
+        return job.job_id
+    
+    def submit_job(self, job_id: str) -> bool:
+        """
+        Submit a job for execution.
+        
+        Args:
+            job_id: ID of the job to submit
             
-            # Prepare job
-            job = Job(
-                func=func,
-                args=list(args),
-                kwargs={},
-                name=name,
-                priority=priority,
-                tags=tags,
-                metadata=metadata,
-                timeout=timeout or self.default_timeout,
-                retries=retries if retries is not None else self.default_retries,
-                retry_delay=retry_delay if retry_delay is not None else self.default_retry_delay,
-                group_id=group_id
-            )
+        Returns:
+            True if job was submitted, False otherwise
+        """
+        if job_id not in self.jobs:
+            logger.error(f"Job {job_id} not found")
+            return False
+        
+        job = self.jobs[job_id]
+        
+        # Check if job is already running or completed
+        if job.status not in [JobStatus.CREATED, JobStatus.FAILED]:
+            logger.warning(f"Job {job_id} is already in state {job.status.value}")
+            return False
+        
+        # Queue the job
+        job.mark_queued()
+        
+        # Add to queue with priority
+        priority_value = {
+            JobPriority.LOW: 30,
+            JobPriority.NORMAL: 20,
+            JobPriority.HIGH: 10,
+            JobPriority.CRITICAL: 0
+        }[job.priority]
+        
+        try:
+            self.job_queue.put((priority_value, job.job_id))
+            self.stats["jobs_submitted"] += 1
             
-            # Add to job group if specified
-            if group_id:
-                if group_id not in self.job_group_map:
-                    self.job_group_map[group_id] = []
-                self.job_group_map[group_id].append(job.job_id)
+            # Save
+            self._save_jobs()
             
-            # Add to queue
-            self.job_queue.put(job)
+            return True
+        except queue.Full:
+            logger.error(f"Job queue is full, cannot submit job {job_id}")
+            return False
+    
+    def create_and_submit_job(self,
+                            task_name: str,
+                            task_func: Callable,
+                            task_args: Optional[Dict[str, Any]] = None,
+                            priority: JobPriority = JobPriority.NORMAL,
+                            max_retries: int = 0,
+                            retry_delay: int = 60,
+                            timeout: Optional[int] = None,
+                            dependencies: Optional[List[str]] = None,
+                            metadata: Optional[Dict[str, Any]] = None) -> Optional[str]:
+        """
+        Create and submit a job for execution.
+        
+        Args:
+            task_name: Name of the task
+            task_func: Function to execute for this job
+            task_args: Arguments to pass to the task function
+            priority: Job priority
+            max_retries: Maximum number of retries for failed jobs
+            retry_delay: Delay in seconds between retries
+            timeout: Timeout in seconds for the job execution
+            dependencies: List of job IDs that must complete before this job
+            metadata: Optional metadata dictionary
             
-            logger.debug(f"Job {job.job_id} ({job.name}) submitted with priority {job.priority.value}")
-            return job.job_id
+        Returns:
+            Job ID if successful, None otherwise
+        """
+        job_id = self.create_job(
+            task_name=task_name,
+            task_func=task_func,
+            task_args=task_args,
+            priority=priority,
+            max_retries=max_retries,
+            retry_delay=retry_delay,
+            timeout=timeout,
+            dependencies=dependencies,
+            metadata=metadata
+        )
+        
+        if self.submit_job(job_id):
+            return job_id
+        return None
     
     def cancel_job(self, job_id: str) -> bool:
         """
@@ -335,125 +503,159 @@ class BatchProcessingPlugin(PluginBase):
             job_id: ID of the job to cancel
             
         Returns:
-            True if the job was canceled, False otherwise
+            True if job was canceled, False otherwise
         """
-        with self.lock:
-            # Check if job is in queue
-            if self.job_queue.contains(job_id):
-                job = self.job_queue.remove(job_id)
-                
-                if job:
-                    job.status = JobStatus.CANCELLED
-                    self.completed_jobs[job_id] = job
-                    self.system_metrics["jobs_canceled"] += 1
-                    logger.info(f"Job {job_id} canceled from queue")
-                    return True
-            
-            # Check if job is active
-            if job_id in self.active_jobs:
-                job = self.active_jobs[job_id]
-                return self._cancel_job(job)
-            
-            # Job not found
-            logger.warning(f"Job {job_id} not found for cancellation")
+        if job_id not in self.jobs:
+            logger.error(f"Job {job_id} not found")
             return False
+        
+        job = self.jobs[job_id]
+        
+        # Check if job is already completed or canceled
+        if job.is_terminal_state():
+            logger.warning(f"Job {job_id} is already in terminal state {job.status.value}")
+            return False
+        
+        # If job is running, cancel the future
+        if job.status == JobStatus.RUNNING and job_id in self.job_futures:
+            self.job_futures[job_id].cancel()
+        
+        # Mark as canceled
+        job.mark_canceled()
+        self.stats["jobs_canceled"] += 1
+        
+        # Update job group if any
+        if job.group_id and job.group_id in self.job_groups:
+            self.job_groups[job.group_id].mark_job_canceled(job_id)
+        
+        # Save
+        self._save_jobs()
+        self._save_job_groups()
+        
+        return True
     
-    def pause_job(self, job_id: str) -> bool:
+    def create_job_group(self,
+                       name: str,
+                       job_ids: Optional[List[str]] = None,
+                       description: Optional[str] = None,
+                       sequential: bool = False,
+                       cancel_on_failure: bool = False,
+                       metadata: Optional[Dict[str, Any]] = None) -> str:
         """
-        Pause a job.
+        Create a job group.
         
         Args:
-            job_id: ID of the job to pause
+            name: Group name
+            job_ids: Optional list of job IDs to add to the group
+            description: Optional group description
+            sequential: Whether to process jobs sequentially
+            cancel_on_failure: Whether to cancel remaining jobs on failure
+            metadata: Optional metadata dictionary
             
         Returns:
-            True if the job was paused, False otherwise
+            Group ID
         """
-        with self.lock:
-            # Can only pause active jobs
-            if job_id in self.active_jobs:
-                job = self.active_jobs[job_id]
-                job.status = JobStatus.PAUSED
-                logger.info(f"Job {job_id} paused")
-                return True
-            
-            logger.warning(f"Job {job_id} not active, cannot pause")
-            return False
+        group = JobGroup(
+            name=name,
+            job_ids=job_ids,
+            description=description,
+            sequential=sequential,
+            cancel_on_failure=cancel_on_failure,
+            metadata=metadata
+        )
+        
+        self.job_groups[group.group_id] = group
+        
+        # Update job references
+        if job_ids:
+            for job_id in job_ids:
+                if job_id in self.jobs:
+                    self.jobs[job_id].group_id = group.group_id
+        
+        # Save
+        self._save_job_groups()
+        self._save_jobs()
+        
+        return group.group_id
     
-    def resume_job(self, job_id: str) -> bool:
+    def add_job_to_group(self, job_id: str, group_id: str) -> bool:
         """
-        Resume a paused job.
+        Add a job to a group.
         
         Args:
-            job_id: ID of the job to resume
+            job_id: ID of the job to add
+            group_id: ID of the group to add the job to
             
         Returns:
-            True if the job was resumed, False otherwise
+            True if successful, False otherwise
         """
-        with self.lock:
-            # Can only resume paused jobs
-            if job_id in self.active_jobs:
-                job = self.active_jobs[job_id]
-                
-                if job.status == JobStatus.PAUSED:
-                    job.status = JobStatus.RUNNING
-                    logger.info(f"Job {job_id} resumed")
-                    return True
-                
-                logger.warning(f"Job {job_id} is not paused, cannot resume")
-                return False
-            
-            logger.warning(f"Job {job_id} not active, cannot resume")
+        if job_id not in self.jobs:
+            logger.error(f"Job {job_id} not found")
             return False
+        
+        if group_id not in self.job_groups:
+            logger.error(f"Group {group_id} not found")
+            return False
+        
+        # Add job to group
+        self.job_groups[group_id].add_job(job_id)
+        
+        # Update job reference
+        self.jobs[job_id].group_id = group_id
+        
+        # Save
+        self._save_job_groups()
+        self._save_jobs()
+        
+        return True
+    
+    def remove_job_from_group(self, job_id: str, group_id: str) -> bool:
+        """
+        Remove a job from a group.
+        
+        Args:
+            job_id: ID of the job to remove
+            group_id: ID of the group to remove the job from
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if job_id not in self.jobs:
+            logger.error(f"Job {job_id} not found")
+            return False
+        
+        if group_id not in self.job_groups:
+            logger.error(f"Group {group_id} not found")
+            return False
+        
+        # Remove job from group
+        if not self.job_groups[group_id].remove_job(job_id):
+            return False
+        
+        # Update job reference
+        if self.jobs[job_id].group_id == group_id:
+            self.jobs[job_id].group_id = None
+        
+        # Save
+        self._save_job_groups()
+        self._save_jobs()
+        
+        return True
     
     def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
         """
-        Get information about a job.
+        Get a job by ID.
         
         Args:
             job_id: ID of the job to get
             
         Returns:
-            Dictionary with job information or None if the job is not found
+            Job dictionary or None if not found
         """
-        with self.lock:
-            # Check queue
-            job = self.job_queue.get_job(job_id)
-            if job:
-                return job.to_dict()
-            
-            # Check active jobs
-            if job_id in self.active_jobs:
-                return self.active_jobs[job_id].to_dict()
-            
-            # Check completed jobs
-            if job_id in self.completed_jobs:
-                return self.completed_jobs[job_id].to_dict()
-            
+        if job_id not in self.jobs:
             return None
-    
-    def get_all_jobs(self) -> List[Dict[str, Any]]:
-        """
-        Get information about all jobs.
         
-        Returns:
-            List of dictionaries with job information
-        """
-        with self.lock:
-            jobs = []
-            
-            # Get queued jobs
-            for job in self.job_queue.get_all_jobs():
-                jobs.append(job.to_dict())
-            
-            # Get active jobs
-            for job in self.active_jobs.values():
-                jobs.append(job.to_dict())
-            
-            # Get completed jobs
-            for job in self.completed_jobs.values():
-                jobs.append(job.to_dict())
-            
-            return jobs
+        return self.jobs[job_id].to_dict()
     
     def get_job_status(self, job_id: str) -> Optional[str]:
         """
@@ -463,14 +665,14 @@ class BatchProcessingPlugin(PluginBase):
             job_id: ID of the job to get status for
             
         Returns:
-            Job status string or None if the job is not found
+            Job status string or None if job not found
         """
-        job_info = self.get_job(job_id)
-        if job_info:
-            return job_info["status"]
-        return None
+        if job_id not in self.jobs:
+            return None
+        
+        return self.jobs[job_id].status.value
     
-    def get_job_result(self, job_id: str) -> Any:
+    def get_job_result(self, job_id: str) -> Optional[Any]:
         """
         Get the result of a completed job.
         
@@ -478,16 +680,16 @@ class BatchProcessingPlugin(PluginBase):
             job_id: ID of the job to get result for
             
         Returns:
-            Job result or None if the job is not completed or not found
+            Job result or None if job not found or not completed
         """
-        with self.lock:
-            if job_id in self.job_results:
-                return self.job_results[job_id]
-            
-            if job_id in self.completed_jobs:
-                return self.completed_jobs[job_id].result
-            
+        if job_id not in self.jobs:
             return None
+        
+        job = self.jobs[job_id]
+        if job.status != JobStatus.COMPLETED:
+            return None
+        
+        return job.result
     
     def get_job_error(self, job_id: str) -> Optional[str]:
         """
@@ -497,97 +699,46 @@ class BatchProcessingPlugin(PluginBase):
             job_id: ID of the job to get error for
             
         Returns:
-            Job error string or None if the job did not fail or is not found
+            Job error or None if job not found or not failed
         """
-        with self.lock:
-            if job_id in self.completed_jobs:
-                job = self.completed_jobs[job_id]
-                return job.error
-            
+        if job_id not in self.jobs:
             return None
-    
-    def get_active_jobs(self) -> List[Dict[str, Any]]:
-        """
-        Get information about all active jobs.
         
-        Returns:
-            List of dictionaries with job information
-        """
-        with self.lock:
-            return [job.to_dict() for job in self.active_jobs.values()]
-    
-    def get_job_stats(self) -> Dict[str, Any]:
-        """
-        Get statistics about job processing.
+        job = self.jobs[job_id]
+        if job.status != JobStatus.FAILED:
+            return None
         
-        Returns:
-            Dictionary with job statistics
-        """
-        with self.lock:
-            stats = dict(self.system_metrics)
-            
-            # Update uptime
-            if stats["start_time"]:
-                stats["uptime"] = time.time() - stats["start_time"]
-            
-            return stats
+        return job.error
     
-    def clear_jobs(self, status: Optional[str] = None) -> int:
+    def get_job_group(self, group_id: str) -> Optional[Dict[str, Any]]:
         """
-        Clear completed jobs from history.
+        Get a job group by ID.
         
         Args:
-            status: Optional status filter (e.g., 'completed', 'failed', 'cancelled')
+            group_id: ID of the group to get
             
         Returns:
-            Number of jobs cleared
+            Job group dictionary or None if not found
         """
-        with self.lock:
-            if status:
-                # Convert string status to enum if needed
-                try:
-                    job_status = JobStatus(status)
-                except ValueError:
-                    logger.warning(f"Invalid job status: {status}")
-                    return 0
-                
-                # Clear jobs with matching status
-                jobs_to_remove = [job_id for job_id, job in self.completed_jobs.items()
-                                 if job.status == job_status]
-                
-                for job_id in jobs_to_remove:
-                    del self.completed_jobs[job_id]
-                    if job_id in self.job_results:
-                        del self.job_results[job_id]
-                
-                return len(jobs_to_remove)
-            
-            else:
-                # Clear all completed jobs
-                count = len(self.completed_jobs)
-                self.completed_jobs.clear()
-                self.job_results.clear()
-                return count
+        if group_id not in self.job_groups:
+            return None
+        
+        return self.job_groups[group_id].to_dict()
     
-    def set_scheduling_policy(self, policy: str) -> bool:
+    def get_job_group_status(self, group_id: str) -> Optional[Dict[str, Any]]:
         """
-        Set the job scheduling policy.
+        Get the status of a job group.
         
         Args:
-            policy: Scheduling policy ('fifo', 'priority', 'fairshare')
+            group_id: ID of the group to get status for
             
         Returns:
-            True if the policy was set, False otherwise
+            Job group status dictionary or None if group not found
         """
-        valid_policies = ["fifo", "priority", "fairshare"]
-        if policy not in valid_policies:
-            logger.error(f"Invalid scheduling policy: {policy} (valid: {valid_policies})")
-            return False
+        if group_id not in self.job_groups:
+            return None
         
-        with self.lock:
-            self.scheduling_policy = policy
-            logger.info(f"Scheduling policy set to: {policy}")
-            return True
+        return self.job_groups[group_id].get_status()
     
     def wait_for_job(self, job_id: str, timeout: Optional[float] = None) -> bool:
         """
@@ -595,271 +746,279 @@ class BatchProcessingPlugin(PluginBase):
         
         Args:
             job_id: ID of the job to wait for
-            timeout: Optional timeout in seconds
+            timeout: Maximum time to wait in seconds
             
         Returns:
-            True if the job completed successfully, False otherwise
+            True if job completed successfully, False otherwise
         """
+        if job_id not in self.jobs:
+            logger.error(f"Job {job_id} not found")
+            return False
+        
         start_time = time.time()
-        while True:
-            job_info = self.get_job(job_id)
-            
-            if not job_info:
-                logger.warning(f"Job {job_id} not found")
-                return False
-            
-            status = job_info["status"]
-            if status == JobStatus.COMPLETED.value:
-                return True
-            
-            if status in [JobStatus.FAILED.value, JobStatus.CANCELLED.value]:
-                return False
-            
-            # Check timeout
-            if timeout and (time.time() - start_time) > timeout:
+        job = self.jobs[job_id]
+        
+        while not job.is_terminal_state():
+            if timeout and time.time() - start_time > timeout:
                 logger.warning(f"Timeout waiting for job {job_id}")
                 return False
             
-            # Sleep before checking again
-            time.sleep(0.1)
+            time.sleep(self.poll_interval)
+        
+        return job.status == JobStatus.COMPLETED
     
-    def wait_for_jobs(self, job_ids: List[str], timeout: Optional[float] = None) -> bool:
+    def wait_for_jobs(self, job_ids: List[str], timeout: Optional[float] = None) -> Dict[str, bool]:
         """
         Wait for multiple jobs to complete.
         
         Args:
             job_ids: List of job IDs to wait for
-            timeout: Optional timeout in seconds
+            timeout: Maximum time to wait in seconds
+            
+        Returns:
+            Dictionary mapping job IDs to completion status
+        """
+        start_time = time.time()
+        results = {}
+        pending = set(job_id for job_id in job_ids if job_id in self.jobs)
+        
+        while pending:
+            if timeout and time.time() - start_time > timeout:
+                # Mark remaining jobs as timed out
+                for job_id in pending:
+                    results[job_id] = False
+                logger.warning(f"Timeout waiting for jobs: {pending}")
+                break
+            
+            # Check each pending job
+            for job_id in list(pending):
+                if job_id in self.jobs and self.jobs[job_id].is_terminal_state():
+                    results[job_id] = self.jobs[job_id].status == JobStatus.COMPLETED
+                    pending.remove(job_id)
+            
+            if pending:
+                time.sleep(self.poll_interval)
+        
+        # Add any missing job IDs
+        for job_id in job_ids:
+            if job_id not in results:
+                results[job_id] = False
+        
+        return results
+    
+    def wait_for_job_group(self, group_id: str, timeout: Optional[float] = None) -> bool:
+        """
+        Wait for all jobs in a group to complete.
+        
+        Args:
+            group_id: ID of the group to wait for
+            timeout: Maximum time to wait in seconds
             
         Returns:
             True if all jobs completed successfully, False otherwise
         """
-        if not job_ids:
-            return True
+        if group_id not in self.job_groups:
+            logger.error(f"Group {group_id} not found")
+            return False
         
-        start_time = time.time()
-        pending_jobs = set(job_ids)
+        group = self.job_groups[group_id]
+        job_ids = group.job_ids
         
-        while pending_jobs:
-            # Check each pending job
-            for job_id in list(pending_jobs):
-                job_info = self.get_job(job_id)
-                
-                if not job_info:
-                    logger.warning(f"Job {job_id} not found")
-                    pending_jobs.remove(job_id)
-                    continue
-                
-                status = job_info["status"]
-                if status in [JobStatus.COMPLETED.value, JobStatus.FAILED.value, JobStatus.CANCELLED.value]:
-                    pending_jobs.remove(job_id)
-            
-            # Check timeout
-            if timeout and (time.time() - start_time) > timeout:
-                logger.warning(f"Timeout waiting for jobs {job_ids}")
-                return False
-            
-            # If there are still pending jobs, sleep before checking again
-            if pending_jobs:
-                time.sleep(0.1)
+        results = self.wait_for_jobs(job_ids, timeout)
         
         # Check if all jobs completed successfully
-        for job_id in job_ids:
-            status = self.get_job_status(job_id)
-            if status != JobStatus.COMPLETED.value:
-                return False
-        
-        return True
+        return all(results.values())
     
-    def create_job_group(self, name: Optional[str] = None) -> str:
+    def get_job_stats(self) -> Dict[str, Any]:
         """
-        Create a job group for batch operations.
+        Get job statistics.
         
-        Args:
-            name: Optional group name
-            
         Returns:
-            Group ID
+            Dictionary with job statistics
         """
-        group_id = str(uuid.uuid4())
-        self.job_group_map[group_id] = []
-        return group_id
-    
-    def _monitor_jobs(self) -> None:
-        """
-        Monitor and process jobs in the queue.
-        """
-        logger.info("Job monitor thread started")
-        
-        while not self.stop_event.is_set():
-            try:
-                # Process jobs in the queue
-                self._process_jobs()
-                
-                # Update metrics
-                self._update_metrics()
-                
-                # Sleep for a short interval
-                time.sleep(self.monitor_interval)
-            
-            except Exception as e:
-                logger.error(f"Error in job monitor: {e}")
-                time.sleep(1.0)  # Sleep on error to avoid tight loop
-        
-        logger.info("Job monitor thread stopped")
+        return {
+            "jobs_total": len(self.jobs),
+            "jobs_submitted": self.stats["jobs_submitted"],
+            "jobs_completed": self.stats["jobs_completed"],
+            "jobs_failed": self.stats["jobs_failed"],
+            "jobs_canceled": self.stats["jobs_canceled"],
+            "average_execution_time": self.stats["average_execution_time"],
+            "average_wait_time": self.stats["average_wait_time"],
+            "job_groups_total": len(self.job_groups)
+        }
     
     def _process_jobs(self) -> None:
+        """Process jobs in the queue."""
+        logger.info("Job processing thread started")
+        
+        while self.running:
+            try:
+                # Check if we can execute more jobs
+                if len(self.job_futures) < self.max_workers:
+                    try:
+                        # Get a job from the queue (non-blocking)
+                        priority, job_id = self.job_queue.get(block=False)
+                        
+                        # Process the job
+                        self._execute_job(job_id)
+                        
+                        # Mark the task as done
+                        self.job_queue.task_done()
+                    except queue.Empty:
+                        # No jobs in the queue, check if we can schedule jobs from groups
+                        self._schedule_group_jobs()
+                
+                # Check for completed futures
+                self._check_futures()
+                
+                # Small delay to avoid busy waiting
+                time.sleep(self.poll_interval)
+            
+            except Exception as e:
+                logger.error(f"Error in job processing thread: {e}")
+                time.sleep(1.0)  # Longer delay on error
+        
+        logger.info("Job processing thread stopped")
+    
+    def _execute_job(self, job_id: str) -> None:
         """
-        Process jobs in the queue according to the scheduling policy.
+        Execute a job.
+        
+        Args:
+            job_id: ID of the job to execute
         """
-        # Skip if there are no jobs in the queue
-        if self.job_queue.is_empty():
+        if job_id not in self.jobs:
+            logger.error(f"Job {job_id} not found")
             return
         
-        # Check if we can process more jobs
-        with self.lock:
-            if len(self.active_jobs) >= self.max_concurrent_jobs:
-                return
-            
-            # Get the next job from the queue
-            job = self.job_queue.get()
-            if not job:
-                return
-            
-            # Mark job as running
-            job.status = JobStatus.RUNNING
-            job.start_time = time.time()
-            self.active_jobs[job.job_id] = job
-            
-            # Submit job to executor
-            self.executor.submit(self._execute_job, job)
+        job = self.jobs[job_id]
+        
+        # Check for dependencies
+        if job.dependencies:
+            for dep_id in job.dependencies:
+                if dep_id in self.jobs:
+                    dep_job = self.jobs[dep_id]
+                    if not dep_job.is_terminal_state():
+                        # Dependency not completed, put back in queue with original priority
+                        job.mark_waiting()
+                        priority_value = {
+                            JobPriority.LOW: 30,
+                            JobPriority.NORMAL: 20,
+                            JobPriority.HIGH: 10,
+                            JobPriority.CRITICAL: 0
+                        }[job.priority]
+                        self.job_queue.put((priority_value, job_id))
+                        return
+                    elif dep_job.status != JobStatus.COMPLETED:
+                        # Dependency failed or canceled
+                        job.mark_failed(f"Dependency {dep_id} failed or was canceled")
+                        self.stats["jobs_failed"] += 1
+                        return
+        
+        # Mark as running
+        job.mark_running()
+        
+        # Submit to executor
+        self.job_futures[job_id] = self.executor.submit(self._run_job, job_id)
     
-    def _execute_job(self, job: Job) -> None:
+    def _run_job(self, job_id: str) -> None:
         """
-        Execute a job and handle the result.
+        Run a job in a worker thread.
         
         Args:
-            job: Job to execute
+            job_id: ID of the job to run
         """
-        logger.debug(f"Executing job {job.job_id} ({job.name})")
+        if job_id not in self.jobs:
+            return
         
-        start_time = time.time()
-        error = None
-        result = None
+        job = self.jobs[job_id]
         
         try:
-            # Check if job was cancelled
-            if job.status != JobStatus.RUNNING:
-                logger.debug(f"Job {job.job_id} not running, skipping execution")
-                return
+            # Execute the task function
+            if job.timeout:
+                # Not implemented: timeout handling would be more complex
+                result = job.task_func(**job.task_args)
+            else:
+                result = job.task_func(**job.task_args)
             
-            # Execute the job function
-            result = job.func(*job.args, **job.kwargs)
+            # Mark as completed
+            job.mark_completed(result)
+            self.stats["jobs_completed"] += 1
             
-            # Store result
-            with self.lock:
-                job.result = result
-                self.job_results[job.job_id] = result
-                job.status = JobStatus.COMPLETED
-                job.end_time = time.time()
-                
-                # Move from active to completed
-                if job.job_id in self.active_jobs:
-                    del self.active_jobs[job.job_id]
-                self.completed_jobs[job.job_id] = job
-                
-                # Update metrics
-                self.system_metrics["jobs_processed"] += 1
-                self.system_metrics["jobs_succeeded"] += 1
-                self.system_metrics["total_processing_time"] += (job.end_time - job.start_time)
+            # Update job group if any
+            if job.group_id and job.group_id in self.job_groups:
+                self.job_groups[job.group_id].mark_job_completed(job_id)
             
-            logger.debug(f"Job {job.job_id} ({job.name}) completed successfully")
-        
+            # Update statistics
+            execution_time = job.get_execution_time() or 0.0
+            self.stats["total_execution_time"] += execution_time
+            
+            if self.stats["jobs_completed"] > 0:
+                self.stats["average_execution_time"] = self.stats["total_execution_time"] / self.stats["jobs_completed"]
+            
         except Exception as e:
-            error = str(e)
-            logger.error(f"Job {job.job_id} ({job.name}) failed: {error}")
+            # Mark as failed
+            error_msg = str(e)
+            job.mark_failed(error_msg)
+            self.stats["jobs_failed"] += 1
             
-            with self.lock:
-                # Check if job should be retried
-                if job.retry_count < job.retries:
-                    job.retry_count += 1
-                    job.status = JobStatus.QUEUED
-                    job.error = error
-                    job.queue_time = time.time()
-                    
-                    # Re-queue the job after delay
-                    threading.Timer(job.retry_delay, self._requeue_job, args=[job]).start()
-                    
-                    logger.info(f"Job {job.job_id} will be retried ({job.retry_count}/{job.retries})")
-                    
-                    # Remove from active jobs
-                    if job.job_id in self.active_jobs:
-                        del self.active_jobs[job.job_id]
-                
-                else:
-                    # Mark as failed
-                    job.status = JobStatus.FAILED
-                    job.error = error
-                    job.end_time = time.time()
-                    
-                    # Move from active to completed
-                    if job.job_id in self.active_jobs:
-                        del self.active_jobs[job.job_id]
-                    self.completed_jobs[job.job_id] = job
-                    
-                    # Update metrics
-                    self.system_metrics["jobs_processed"] += 1
-                    self.system_metrics["jobs_failed"] += 1
-                    self.system_metrics["total_processing_time"] += (job.end_time - job.start_time)
-                    
-                    logger.info(f"Job {job.job_id} ({job.name}) failed after {job.retry_count} retries")
-    
-    def _requeue_job(self, job: Job) -> None:
-        """
-        Re-queue a job for retry.
-        
-        Args:
-            job: Job to re-queue
-        """
-        with self.lock:
-            # Put job back in the queue
-            self.job_queue.put(job)
-            logger.debug(f"Job {job.job_id} re-queued for retry {job.retry_count}/{job.retries}")
-    
-    def _cancel_job(self, job: Job) -> bool:
-        """
-        Cancel an active job.
-        
-        Args:
-            job: Job to cancel
+            # Update job group if any
+            if job.group_id and job.group_id in self.job_groups:
+                self.job_groups[job.group_id].mark_job_failed(job_id)
             
-        Returns:
-            True if the job was canceled, False otherwise
-        """
-        with self.lock:
-            if job.job_id in self.active_jobs:
-                # Mark job as cancelled
-                job.status = JobStatus.CANCELLED
-                job.end_time = time.time()
-                
-                # Move from active to completed
-                del self.active_jobs[job.job_id]
-                self.completed_jobs[job.job_id] = job
-                
-                # Update metrics
-                self.system_metrics["jobs_processed"] += 1
-                self.system_metrics["jobs_canceled"] += 1
-                
-                logger.info(f"Job {job.job_id} canceled")
-                return True
-            
-            return False
-    
-    def _update_metrics(self) -> None:
-        """
-        Update system metrics.
-        """
-        if self.system_metrics["start_time"]:
-            self.system_metrics["uptime"] = time.time() - self.system_metrics["start_time"]
+            logger.error(f"Job {job_id} failed: {error_msg}")
         
-        # Additional metrics could be added here
+        finally:
+            # Save state
+            self._save_jobs()
+            self._save_job_groups()
+    
+    def _check_futures(self) -> None:
+        """Check for completed futures and remove them."""
+        # Check each future
+        for job_id in list(self.job_futures.keys()):
+            future = self.job_futures[job_id]
+            
+            if future.done():
+                # Remove from futures
+                del self.job_futures[job_id]
+                
+                # Handle retry if job failed
+                if job_id in self.jobs and self.jobs[job_id].status == JobStatus.FAILED:
+                    job = self.jobs[job_id]
+                    if job.can_retry():
+                        # Increment retry count
+                        job.increment_retry()
+                        
+                        # Re-queue the job
+                        job.mark_queued()
+                        
+                        # Add to queue with priority
+                        priority_value = {
+                            JobPriority.LOW: 30,
+                            JobPriority.NORMAL: 20,
+                            JobPriority.HIGH: 10,
+                            JobPriority.CRITICAL: 0
+                        }[job.priority]
+                        
+                        # Wait for retry delay
+                        time.sleep(job.retry_delay)
+                        
+                        try:
+                            self.job_queue.put((priority_value, job_id))
+                        except queue.Full:
+                            logger.error(f"Job queue is full, cannot retry job {job_id}")
+    
+    def _schedule_group_jobs(self) -> None:
+        """Schedule jobs from groups."""
+        for group_id, group in self.job_groups.items():
+            if group.is_complete():
+                continue
+            
+            # Get next jobs to run
+            next_jobs = group.get_next_jobs_to_run(max_jobs=self.max_workers - len(self.job_futures))
+            
+            for job_id in next_jobs:
+                if job_id in self.jobs and self.jobs[job_id].status == JobStatus.CREATED:
+                    # Submit the job
+                    self.submit_job(job_id)

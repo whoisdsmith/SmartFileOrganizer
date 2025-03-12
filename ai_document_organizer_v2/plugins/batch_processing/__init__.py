@@ -1,9 +1,15 @@
 """
 Batch Processing Plugin for AI Document Organizer V2.
-
-Provides batch processing capabilities for document processing tasks.
 """
 
-from .batch_plugin import BatchProcessingPlugin
+from .batch_plugin import BatchProcessorPlugin
+from .models.job import Job, JobStatus, JobPriority
+from .models.job_group import JobGroup
 
-__all__ = ["BatchProcessingPlugin"]
+__all__ = [
+    "BatchProcessorPlugin",
+    "Job",
+    "JobStatus",
+    "JobPriority",
+    "JobGroup"
+]
